@@ -33,7 +33,7 @@ src/your-agent-dotnet/
     └── YourTools.cs
 ```
 
-**Note**: Conversational UI models (like `AIChatMessage`, `AIChatRequest`, etc.) and Cosmos session store services are now in shared libraries (`shared-services`) to avoid duplication across agents.
+**Note**: Conversational UI models (like `AIChatMessage`, `AIChatRequest`, etc.) and Cosmos Thread Store services are now in shared libraries (`shared-services`) to avoid duplication across agents.
 
 ## Dependencies and Project Setup
 
@@ -85,10 +85,12 @@ Add the required NuGet packages to your `.csproj` file:
 The repository provides shared libraries to avoid code duplication:
 
 **SharedServices** (`src/shared-services`):
-- `CosmosAgentSessionStore`: Cosmos DB implementation of `AgentSessionStore`
+- `CosmosAgentThreadStore`: Cosmos DB implementation of `AgentThreadStore`
 - `CosmosThreadRepository`: Repository for storing/retrieving agent threads
 - `ICosmosThreadRepository`: Interface for thread storage
 - `CosmosSystemTextJsonSerializer`: Custom JSON serializer for Cosmos DB
+
+> **Important**: `ChatClientAgentThread` internal types cannot be serialized with System.Text.Json. The thread store caches threads in-memory only. Cosmos persistence of thread state is not currently supported.
 
 ### Key Namespace Imports
 
@@ -135,7 +137,7 @@ builder.Services.AddSingleton<YourTools>();
 builder.AddKeyedAzureCosmosContainer("conversations", 
     configureClientOptions: (option) => option.Serializer = new CosmosSystemTextJsonSerializer());
 builder.Services.AddSingleton<ICosmosThreadRepository, CosmosThreadRepository>();
-builder.Services.AddSingleton<CosmosAgentSessionStore>();
+builder.Services.AddSingleton<CosmosAgentThreadStore>();
 ```
 
 #### Register the Agent
@@ -146,7 +148,7 @@ builder.AddAIAgent("your-agent-name", (sp, key) =>
     var chatClient = sp.GetRequiredService<IChatClient>();
     var yourTools = sp.GetRequiredService<YourTools>().GetFunctions();
 
-    var agent = chatClient.AsAIAgent(
+    var agent = chatClient.CreateAIAgent(
         instructions: @"You are a helpful assistant that...",
         description: "A friendly AI assistant",
         name: key,
@@ -154,7 +156,7 @@ builder.AddAIAgent("your-agent-name", (sp, key) =>
     );
 
     return agent;
-}).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
+}).WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
 ```
 
 #### Add Custom API Endpoint
@@ -166,7 +168,7 @@ var app = builder.Build();
 
 app.MapPost("/agent/chat/stream", async (
     [FromKeyedServices("your-agent-name")] AIAgent agent,
-    [FromKeyedServices("your-agent-name")] AgentSessionStore sessionStore,
+    [FromKeyedServices("your-agent-name")] AgentThreadStore threadStore,
     [FromBody] AIChatRequest request,
     [FromServices] ILogger<Program> logger,
     HttpResponse response) =>
@@ -188,11 +190,11 @@ app.MapPost("/agent/chat/stream", async (
     else
     {
         var message = request.Messages.LastOrDefault();
-        var session = await sessionStore.GetSessionAsync(agent, conversationId);
+        var thread = await threadStore.GetThreadAsync(agent, conversationId);
         var chatMessage = new ChatMessage(ChatRole.User, message.Content);
 
         // Stream responses
-        await foreach (var update in agent.RunStreamingAsync(chatMessage, session))
+        await foreach (var update in agent.RunStreamingAsync(chatMessage, thread))
         {
             await response.WriteAsync($"{JsonSerializer.Serialize(
                 new AIChatCompletionDelta(new AIChatMessageDelta() 
@@ -200,7 +202,7 @@ app.MapPost("/agent/chat/stream", async (
             await response.Body.FlushAsync();
         }
 
-        await sessionStore.SaveSessionAsync(agent, conversationId, session);
+        await threadStore.SaveThreadAsync(agent, conversationId, thread);
     }
 
     return;
@@ -291,7 +293,7 @@ for await (const event of client.sendMessageStream(params)) {
 
 ### Pattern 2: A2A Agent with Custom API (Legacy)
 
-This pattern combines A2A for agent-to-agent communication with custom endpoints for frontend integration. **Consider using Pattern 1 (A2A-only) for new implementations**. See `src/agents-dotnet/Program.cs` for a reference implementation.
+This pattern combines A2A for agent-to-agent communication with custom endpoints for frontend integration. **Consider using Pattern 1 (A2A-only) for new implementations**. See `src/lift-traffic-agent-dotnet/Program.cs` for a reference implementation.
 
 #### Add Custom API Endpoint
 
@@ -302,7 +304,7 @@ var app = builder.Build();
 
 app.MapPost("/agent/chat/stream", async (
     [FromKeyedServices("your-agent-name")] AIAgent agent,
-    [FromKeyedServices("your-agent-name")] AgentSessionStore sessionStore,
+    [FromKeyedServices("your-agent-name")] AgentThreadStore threadStore,
     [FromBody] AIChatRequest request,
     [FromServices] ILogger<Program> logger,
     HttpResponse response) =>
@@ -324,11 +326,11 @@ app.MapPost("/agent/chat/stream", async (
     else
     {
         var message = request.Messages.LastOrDefault();
-        var session = await sessionStore.GetSessionAsync(agent, conversationId);
+        var thread = await threadStore.GetThreadAsync(agent, conversationId);
         var chatMessage = new ChatMessage(ChatRole.User, message.Content);
 
         // Stream responses
-        await foreach (var update in agent.RunStreamingAsync(chatMessage, session))
+        await foreach (var update in agent.RunStreamingAsync(chatMessage, thread))
         {
             await response.WriteAsync($"{JsonSerializer.Serialize(
                 new AIChatCompletionDelta(new AIChatMessageDelta() 
@@ -336,7 +338,7 @@ app.MapPost("/agent/chat/stream", async (
             await response.Body.FlushAsync();
         }
 
-        await sessionStore.SaveSessionAsync(agent, conversationId, session);
+        await threadStore.SaveThreadAsync(agent, conversationId, thread);
     }
 
     return;
@@ -409,7 +411,7 @@ var cardResolver = new A2ACardResolver(
     agentCardPath: "/agenta2a/v1/card"
 );
 
-var remoteAgent = cardResolver.GetAIAgentAsync().Result;
+var remoteAgent = cardResolver.GetAIAgentAsync(httpClient).Result;
 builder.AddAIAgent("remote-agent", (sp, key) => remoteAgent);
 
 // Create a workflow with multiple agents
@@ -428,7 +430,7 @@ builder.AddAIAgent("group-chat", (sp, key) =>
         .Build();
 
     return workflow.AsAgent(name: key);
-}).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
+}).WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
 ```
 
 ### Pattern 5: Sequential Workflow
@@ -449,7 +451,7 @@ builder.AddWorkflow("publisher", (sp, key) => AgentWorkflowBuilder.BuildSequenti
     workflowName: key,
     sp.GetRequiredKeyedService<AIAgent>("writer"),
     sp.GetRequiredKeyedService<AIAgent>("editor")
-)).AddAsAIAgent();
+)).AsAIAgent();
 ```
 
 ## Tools and Functions
@@ -512,7 +514,7 @@ builder.AddAIAgent("main-agent", (sp, key) =>
     var chatClient = sp.GetRequiredService<IChatClient>();
     var anotherAgent = sp.GetRequiredKeyedService<AIAgent>("helper-agent");
     
-    var agent = chatClient.AsAIAgent(
+    var agent = chatClient.CreateAIAgent(
         name: key,
         instructions: "Your instructions",
         tools: [
@@ -524,18 +526,20 @@ builder.AddAIAgent("main-agent", (sp, key) =>
 });
 ```
 
-## Session Store and Conversation Management
+## Thread Store and Conversation Management
 
-The session store manages conversation history and state, enabling stateful conversations across multiple requests. This repository uses Cosmos DB for persistence.
+The Thread Store manages conversation history and state, enabling stateful conversations across multiple requests. This repository uses a hybrid approach: in-memory caching with Cosmos DB for metadata.
 
-### Using the Shared Cosmos Session Store
+> **Known limitation**: `ChatClientAgentThread` internal types (`InMemoryChatMessageStore.StoreState`) cannot be serialized with System.Text.Json. The thread store caches threads in-memory only. When no cached thread exists, `GetThreadAsync` must call `agent.GetNewThread()` to create a new one.
 
-The repository provides a ready-to-use Cosmos DB session store implementation in the `SharedServices` library. See `src/shared-services/CosmosAgentThreadStore.cs` for the complete implementation.
+### Using the Shared Cosmos Thread Store
+
+The repository provides a ready-to-use Cosmos DB Thread Store implementation in the `SharedServices` library. See `src/shared-services/CosmosAgentThreadStore.cs` for the complete implementation.
 
 To use it in your agent:
 
 ```csharp
-// In your Program.cs, register the Cosmos container and session store services
+// In your Program.cs, register the Cosmos container and Thread Store services
 using SharedServices;
 
 // Register Cosmos container with custom serializer
@@ -544,33 +548,34 @@ builder.AddKeyedAzureCosmosContainer("conversations",
 
 // Register the thread repository and store from shared services
 builder.Services.AddSingleton<ICosmosThreadRepository, CosmosThreadRepository>();
-builder.Services.AddSingleton<CosmosAgentSessionStore>();
+builder.Services.AddSingleton<CosmosAgentThreadStore>();
 ```
 
-The `CosmosAgentSessionStore` handles:
-- Serializing and deserializing agent sessions
-- Storing sessions in Cosmos DB with a composite key (agentId:conversationId)
-- Creating new sessions when none exist
+The `CosmosAgentThreadStore` handles:
+- Creating new threads via `agent.GetNewThread()` when no cached thread exists
+- Caching threads in-memory keyed by `agentName:conversationId`
 - Logging operations for debugging
 
-### Using the Session Store
+> **Known limitation**: `ChatClientAgentThread` internal types cannot be serialized with System.Text.Json. Thread state is cached in-memory only. Cosmos DB persistence of full thread state is not currently supported.
 
-Register the session store with your agent and use it in endpoints:
+### Using the Thread Store
+
+Register the Thread Store with your agent and use it in endpoints:
 
 ```csharp
 // Registration
-builder.Services.AddSingleton<CosmosAgentSessionStore>();
+builder.Services.AddSingleton<CosmosAgentThreadStore>();
 
 builder.AddAIAgent("agent", (sp, key) => { /* ... */ })
-    .WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
+    .WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
 
 // Usage in endpoint
-var session = await sessionStore.GetSessionAsync(agent, conversationId);
-await foreach (var update in agent.RunStreamingAsync(chatMessage, session))
+var thread = await threadStore.GetThreadAsync(agent, conversationId);
+await foreach (var update in agent.RunStreamingAsync(chatMessage, thread))
 {
     // Process updates
 }
-await sessionStore.SaveSessionAsync(agent, conversationId, session);
+await threadStore.SaveThreadAsync(agent, conversationId, thread);
 ```
 
 ## Complete Examples
@@ -607,7 +612,7 @@ builder.Services.AddSingleton<DocumentTools>();
 builder.AddKeyedAzureCosmosContainer("conversations",
     configureClientOptions: (option) => option.Serializer = new CosmosSystemTextJsonSerializer());
 builder.Services.AddSingleton<ICosmosThreadRepository, CosmosThreadRepository>();
-builder.Services.AddSingleton<CosmosAgentSessionStore>();
+builder.Services.AddSingleton<CosmosAgentThreadStore>();
 
 // Register the agent
 builder.AddAIAgent("doc-agent", (sp, key) =>
@@ -615,12 +620,12 @@ builder.AddAIAgent("doc-agent", (sp, key) =>
     var chatClient = sp.GetRequiredService<IChatClient>();
     var tools = sp.GetRequiredService<DocumentTools>().GetFunctions();
 
-    return chatClient.AsAIAgent(
+    return chatClient.CreateAIAgent(
         name: key,
         instructions: "You help users find and manage documents.",
         tools: tools
     );
-}).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
+}).WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
 
 var app = builder.Build();
 
@@ -685,7 +690,7 @@ builder.AddAzureChatCompletionsClient(connectionName: "foundry",
 builder.AddKeyedAzureCosmosContainer("conversations",
     configureClientOptions: (option) => option.Serializer = new CosmosSystemTextJsonSerializer());
 builder.Services.AddSingleton<ICosmosThreadRepository, CosmosThreadRepository>();
-builder.Services.AddSingleton<CosmosAgentSessionStore>();
+builder.Services.AddSingleton<CosmosAgentThreadStore>();
 
 // Configure CORS
 builder.Services.AddCors(options =>
@@ -712,14 +717,14 @@ var cardResolver = new A2ACardResolver(
     agentCardPath: "/agenta2a/v1/card"
 );
 
-var specializedAgent = cardResolver.GetAIAgentAsync().Result;
+var specializedAgent = cardResolver.GetAIAgentAsync(httpClient).Result;
 
 // Register the orchestrator agent that uses other agents as tools
 builder.AddAIAgent("orchestrator-agent", (sp, key) =>
 {
     var chatClient = sp.GetRequiredService<IChatClient>();
 
-    var agent = chatClient.AsAIAgent(
+    var agent = chatClient.CreateAIAgent(
         instructions: @"You are a helpful orchestrator that coordinates multiple specialized agents.
 When users ask questions, determine which specialized agent to use and invoke them as tools.",
         description: "An orchestrator that coordinates multiple specialized agents",
@@ -730,7 +735,7 @@ When users ask questions, determine which specialized agent to use and invoke th
     );
 
     return agent;
-}).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
+}).WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
 
 var app = builder.Build();
 
@@ -786,7 +791,7 @@ app.Run();
 
 ### Session Management
 
--   Always use a session store for conversation persistence
+-   Always use a Thread Store for conversation persistence
 -   Generate or use consistent conversation IDs
 -   Clean up old conversations periodically
 -   Consider token limits when storing conversation history
@@ -874,6 +879,7 @@ for await (const event of client.sendMessageStream(params)) {
 -   [Aspire Documentation](https://learn.microsoft.com/dotnet/aspire/) - .NET Aspire documentation
 -   [Restaurant Agent](../../src/restaurant-agent/) - A2A-only agent implementation example
 -   [Orchestrator Agent](../../src/orchestrator-agent/) - A2A orchestration example
--   [Agent Dotnet](https://github.com/tommasodotNET/agent-framework-aspire/tree/main/src/agents-dotnet) - Reference implementation with A2A and custom API
+-   [Lift Traffic Agent](../../src/lift-traffic-agent-dotnet/) - .NET MAF+A2A agent reference implementation
+-   [Advisor Agent](../../src/advisor-agent-dotnet/) - .NET orchestrator agent using remote A2A agents as tools
 -   [Groupchat Dotnet](https://github.com/tommasodotNET/agent-framework-aspire/tree/main/src/groupchat-dotnet) - Multi-agent orchestration example
 -   [Agents Dotnet Tests](https://github.com/tommasodotNET/agent-framework-aspire/tree/main/test/agents-dotnet-tests) - Testing patterns and examples

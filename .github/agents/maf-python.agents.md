@@ -120,9 +120,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 # Microsoft Agent Framework
-from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.observability import setup_observability
+from agent_framework.observability import configure_otel_providers
 from azure.identity import AzureCliCredential
 ```
 
@@ -149,12 +148,10 @@ from a2a.server.events import EventQueue
 from a2a.utils import new_agent_text_message
 
 # Microsoft Agent Framework
-from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-from services.your_service import YourService
-from tools.your_tools import YourTools
+from tools.your_tools import search_data, analyze_results, generate_report
 
 logger = logging.getLogger(__name__)
 
@@ -166,19 +163,12 @@ class YourAgentExecutor(AgentExecutor):
 
     def __init__(self):
         """Initialize the agent executor."""
-        # Initialize services and tools
-        self.your_service = YourService()
-        self.your_tools = YourTools(self.your_service)
-        
-        # Initialize the agent
-        self.agent = self._create_agent()
-
-    def _create_agent(self) -> ChatAgent:
-        """Create and configure the ChatAgent with capabilities."""
-        try:
-            agent = ChatAgent(
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
-                instructions="""You are a specialized assistant. Your role is to help users with...
+        # Create the agent using AzureOpenAIChatClient.as_agent()
+        self.agent = AzureOpenAIChatClient(
+            credential=AzureCliCredential()
+        ).as_agent(
+            name="your-agent",
+            instructions="""You are a specialized assistant. Your role is to help users with...
 
 Your capabilities include:
 - Capability 1
@@ -186,17 +176,8 @@ Your capabilities include:
 - Capability 3
 
 When users ask questions, provide specific, actionable insights.""",
-                tools=[
-                    # Add your tools here
-                    self.your_tools.search_data,
-                    self.your_tools.analyze_results,
-                    self.your_tools.generate_report,
-                ]
-            )
-            return agent
-        except Exception as e:
-            logger.error(f"Warning: Could not initialize ChatAgent: {e}")
-            return None
+            tools=[search_data, analyze_results, generate_report]
+        )
 
     @override
     async def execute(
@@ -225,16 +206,10 @@ When users ask questions, provide specific, actionable insights.""",
                     "I can help you with... "
                     "What would you like to know?"
                 )
-            elif self.agent:
+            else:
                 # Process the query using Microsoft Agent Framework
                 response_content = await self.agent.run(query)
                 response_text = response_content.text
-            else:
-                # Fallback response if agent framework isn't available
-                response_text = (
-                    f"I received your question: '{query}'. "
-                    "However, the agent framework is currently unavailable."
-                )
 
             # Send the response as a message
             message = new_agent_text_message(response_text)
@@ -339,7 +314,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 # Microsoft Agent Framework
-from agent_framework.observability import setup_observability
+from agent_framework.observability import configure_otel_providers
 
 # Local imports
 from .agent_executor import YourAgentExecutor
@@ -382,7 +357,7 @@ def main():
     logger.info(f"Server starting on http://{host}:{port}")
     
     # Setup observability
-    setup_observability()
+    configure_otel_providers()
     
     # Create agent card
     agent_card = get_agent_card(host, port)
@@ -690,7 +665,7 @@ async def health_check():
 
 
 def main():
-    setup_observability()
+    configure_otel_providers()
     
     port = int(os.environ.get("PORT", 8001))
     host = os.environ.get("HOST", "0.0.0.0")
@@ -710,11 +685,13 @@ if __name__ == "__main__":
 
 ## Tools and Functions
 
-Tools enable your agents to perform actions and access data. In Python, tools are defined using type annotations with `Annotated` and `pydantic.Field` for descriptions.
+Tools enable your agents to perform actions and access data. In Python, tools are defined using the `@tool` decorator from `agent_framework` with `Annotated` type hints and `pydantic.Field` for descriptions.
 
-### Creating Tool Classes
+> **Important**: Do NOT use class methods as tools. Bound methods cause "Object of type method is not JSON serializable" errors at runtime. Always use standalone `@tool` decorated functions at module level.
 
-Tools are typically implemented as class methods or standalone functions with type-annotated parameters:
+### Creating Tools with @tool Decorator
+
+Tools must be standalone functions decorated with `@tool`. Define them at module level and import them directly in your executor:
 
 ```python
 """
@@ -725,72 +702,68 @@ import json
 from typing import List, Optional, Dict, Any
 from typing_extensions import Annotated
 from pydantic import Field
+from agent_framework import tool
 
 from services.your_service import YourService
 
+# Module-level service instance
+_service = YourService()
 
-class YourTools:
-    """Your domain tools that integrate with AI agents."""
+
+@tool(name="search_data", description="Search and analyze data by various criteria.")
+async def search_data(
+    query: Annotated[str, Field(description="Search query for data.")],
+    date_range: Annotated[Optional[str], Field(description="Date range filter (e.g., 'last_quarter', 'ytd').")] = None,
+    category: Annotated[Optional[str], Field(description="Category filter.")] = None,
+) -> str:
+    """Search and analyze data by various criteria."""
+    results = await _service.search(query, date_range, category)
     
-    def __init__(self, your_service: YourService):
-        """Initialize with service dependency."""
-        self.your_service = your_service
+    return json.dumps({
+        "query": query,
+        "date_range": date_range,
+        "category": category,
+        "total_results": len(results),
+        "results": results
+    })
+
+
+@tool(name="analyze_results", description="Analyze results and patterns over specified periods.")
+async def analyze_results(
+    period: Annotated[str, Field(description="Analysis period: 'monthly', 'quarterly', 'yearly'.")],
+    metrics: Annotated[List[str], Field(description="Metrics to analyze.")] = None,
+) -> str:
+    """Analyze results and patterns over specified periods."""
+    if metrics is None:
+        metrics = ["growth_rate", "totals"]
     
-    async def search_data(
-        self,
-        query: Annotated[str, Field(description="Search query for data.")],
-        date_range: Annotated[Optional[str], Field(description="Date range filter (e.g., 'last_quarter', 'ytd').")] = None,
-        category: Annotated[Optional[str], Field(description="Category filter.")] = None,
-    ) -> str:
-        """Search and analyze data by various criteria."""
-        # Use the service to get data
-        results = await self.your_service.search(query, date_range, category)
-        
-        # Convert to serializable format
-        return json.dumps({
-            "query": query,
-            "date_range": date_range,
-            "category": category,
-            "total_results": len(results),
-            "results": results
-        })
+    data = await _service.get_analysis(period)
     
-    async def analyze_results(
-        self,
-        period: Annotated[str, Field(description="Analysis period: 'monthly', 'quarterly', 'yearly'.")],
-        metrics: Annotated[List[str], Field(description="Metrics to analyze.")] = None,
-    ) -> str:
-        """Analyze results and patterns over specified periods."""
-        if metrics is None:
-            metrics = ["growth_rate", "totals"]
-        
-        # Get data from service
-        data = await self.your_service.get_analysis(period)
-        
-        return json.dumps({
-            "analysis_period": period,
-            "metrics_analyzed": metrics,
-            "data": data
-        })
+    return json.dumps({
+        "analysis_period": period,
+        "metrics_analyzed": metrics,
+        "data": data
+    })
+
+
+@tool(name="generate_report", description="Generate a report based on analyzed data.")
+async def generate_report(
+    report_type: Annotated[str, Field(description="Type of report: 'summary', 'detailed', 'executive'.")],
+    include_charts: Annotated[bool, Field(description="Whether to include chart data.")] = True,
+) -> str:
+    """Generate a report based on analyzed data."""
+    report = await _service.generate_report(report_type, include_charts)
     
-    async def generate_report(
-        self,
-        report_type: Annotated[str, Field(description="Type of report: 'summary', 'detailed', 'executive'.")],
-        include_charts: Annotated[bool, Field(description="Whether to include chart data.")] = True,
-    ) -> str:
-        """Generate a report based on analyzed data."""
-        report = await self.your_service.generate_report(report_type, include_charts)
-        
-        return json.dumps({
-            "report_type": report_type,
-            "include_charts": include_charts,
-            "report": report
-        })
+    return json.dumps({
+        "report_type": report_type,
+        "include_charts": include_charts,
+        "report": report
+    })
 ```
 
-### Standalone Tool Functions
+### Standalone Tool Functions (No Service Dependency)
 
-For tools that don't require service dependencies:
+For tools that don't require service dependencies, the pattern is the same — use `@tool` at module level:
 
 ```python
 """
@@ -801,8 +774,10 @@ import json
 from typing import Dict, Any, List
 from typing_extensions import Annotated
 from pydantic import Field
+from agent_framework import tool
 
 
+@tool(name="parse_csv_file", description="Parse and analyze CSV files containing data.")
 async def parse_csv_file(
     file_path: Annotated[str, Field(description="Path to the CSV file to parse.")],
     analysis_type: Annotated[str, Field(description="Type of analysis: 'summary', 'trends', 'validation'.")] = "summary",
@@ -821,6 +796,7 @@ async def parse_csv_file(
     return json.dumps(results)
 
 
+@tool(name="query_database", description="Execute SQL queries against databases.")
 async def query_database(
     query: Annotated[str, Field(description="SQL query to execute.")],
     database_type: Annotated[str, Field(description="Database type: 'sqlite', 'postgresql', 'mysql'.")] = "postgresql",
@@ -843,32 +819,30 @@ async def query_database(
 
 ### Registering Tools with Agent
 
+Import tools directly by name and pass them to `as_agent()`:
+
 ```python
-from tools.your_tools import YourTools
-from tools import data_processing_tools
+from tools.your_tools import search_data, analyze_results, generate_report
+from tools.data_processing_tools import parse_csv_file, query_database
 
 class YourAgentExecutor(AgentExecutor):
     def __init__(self):
-        self.your_service = YourService()
-        self.your_tools = YourTools(self.your_service)
-        self.agent = self._create_agent()
-
-    def _create_agent(self) -> ChatAgent:
-        agent = ChatAgent(
-            chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        self.agent = AzureOpenAIChatClient(
+            credential=AzureCliCredential()
+        ).as_agent(
+            name="your-agent",
             instructions="Your agent instructions...",
             tools=[
-                # Class method tools
-                self.your_tools.search_data,
-                self.your_tools.analyze_results,
-                self.your_tools.generate_report,
+                # Domain tools
+                search_data,
+                analyze_results,
+                generate_report,
                 
                 # Standalone function tools
-                data_processing_tools.parse_csv_file,
-                data_processing_tools.query_database,
+                parse_csv_file,
+                query_database,
             ]
         )
-        return agent
 ```
 
 ## Data Models
@@ -999,13 +973,13 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from agent_framework.observability import setup_observability
+from agent_framework.observability import configure_otel_providers
 
 
 def configure_telemetry(app_instance):
     """Configure OpenTelemetry for the application."""
     # Setup agent framework observability
-    setup_observability()
+    configure_otel_providers()
     
     # Setup trace provider
     trace.set_tracer_provider(TracerProvider())
@@ -1046,17 +1020,17 @@ services__other-agent__http__0=http://localhost:8002
 
 ### Basic A2A Agent with Tools
 
-See `src/agents-python/` for a complete reference implementation including:
-- `agents_python/main.py` - Main entry point with A2A server setup
-- `agents_python/agent_executor.py` - AgentExecutor implementation
-- `tools/financial_tools.py` - Tool class pattern
-- `tools/financial_processing_tools.py` - Standalone function tools
-- `services/financial_service.py` - Business logic service
+See the actual agent implementations in this repository for reference:
+- `src/weather-agent-python/` - Weather agent with `@tool` decorated functions
+  - `weather_agent_python/agent_executor.py` - AgentExecutor using `AzureOpenAIChatClient().as_agent()`
+  - `tools/weather_tools.py` - Module-level tools with `@tool` decorator
+  - `services/weather_service.py` - Data service consuming data-generator REST API
+- `src/safety-agent-python/` - Safety agent with risk evaluation tools
+- `src/ski-coach-agent-python/` - Ski coach agent with recommendation tools
 
 ### Workflow with Multiple Agents
 
-See `src/custom-workflow-python/` for a workflow example including:
-- `custom_workflow_python/main.py` - Workflow with conditional routing
+See the A2A protocol documentation for workflow examples including:
 - A2A agent connections via `A2ACardResolver`
 - Executor functions with `@executor` decorator
 - FastAPI endpoint for workflow execution
@@ -1065,11 +1039,14 @@ See `src/custom-workflow-python/` for a workflow example including:
 
 ### Tool Design
 
+-   Use the `@tool(name="...", description="...")` decorator from `agent_framework` for all tools
+-   Define tools as standalone functions at module level (NOT as class methods — bound methods cause serialization errors)
 -   Use `Annotated[type, Field(description="...")]` for all parameters
 -   Return JSON strings for complex data structures
 -   Keep tools focused and single-purpose
 -   Use async/await for I/O operations
 -   Handle errors gracefully and return meaningful error messages
+-   Use a module-level service instance if tools need external data access
 
 ### Agent Instructions
 
@@ -1107,10 +1084,10 @@ except Exception as e:
 
 ### Project Organization
 
--   Keep tools in a dedicated `tools/` directory
+-   Keep tools in a dedicated `tools/` directory as module-level `@tool` decorated functions
 -   Keep services in a dedicated `services/` directory
 -   Keep models in the main package or a `models/` directory
--   Use `__init__.py` to export public interfaces
+-   `__init__.py` files in tools/ are NOT required — import tools directly by function name
 -   Use type hints throughout
 
 ## Running the Agent
@@ -1143,12 +1120,13 @@ uv run pytest tests/ -v
 When consuming Python agents from a frontend application, use the A2A JavaScript SDK (same as .NET agents):
 
 ```typescript
-import { A2AClient } from '@a2a-js/sdk/client';
-import type { MessageSendParams, Message } from '@a2a-js/sdk';
+import { ClientFactory } from '@a2a-js/sdk/client';
+import type { MessageSendParams } from '@a2a-js/sdk';
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize client from agent card URL
-const client = await A2AClient.fromCardUrl('/.well-known/agent.json');
+// Initialize client using ClientFactory
+const factory = new ClientFactory();
+const client = await factory.createFromUrl('http://localhost:8001');
 
 // Send a message with streaming
 const params: MessageSendParams = {
@@ -1162,14 +1140,16 @@ const params: MessageSendParams = {
 };
 
 // Stream responses
-for await (const event of client.sendMessageStream(params)) {
+const stream = client.sendMessageStream(params);
+for await (const event of stream) {
     if (event.kind === 'message') {
-        const message = event as Message;
-        for (const part of message.parts) {
+        for (const part of event.parts ?? []) {
             if (part.kind === 'text') {
                 console.log(part.text);
             }
         }
+    } else if (event.kind === 'status-update') {
+        console.log(`Status: ${event.status.state}`);
     }
 }
 ```
@@ -1180,8 +1160,9 @@ for await (const event of client.sendMessageStream(params)) {
 -   [A2A Protocol](https://a2a-protocol.org/) - Agent-to-Agent protocol specification
 -   [A2A Python SDK](https://github.com/a2aproject/a2a-python) - Official A2A Python SDK
 -   [A2A JavaScript SDK](https://github.com/a2aproject/a2a-js) - Official A2A JavaScript SDK
--   [Python Agent](../../src/agents-python/) - A2A Python agent implementation example
--   [Custom Workflow Python](../../src/custom-workflow-python/) - Workflow orchestration example
+-   [Weather Agent](../../src/weather-agent-python/) - A2A Python agent implementation example
+-   [Safety Agent](../../src/safety-agent-python/) - Safety evaluation agent example
+-   [Ski Coach Agent](../../src/ski-coach-agent-python/) - Recommendation agent example
 -   [uv Documentation](https://docs.astral.sh/uv/) - Python package manager documentation
 -   [FastAPI Documentation](https://fastapi.tiangolo.com/) - FastAPI framework documentation
 -   [Pydantic Documentation](https://docs.pydantic.dev/) - Pydantic data validation documentation
