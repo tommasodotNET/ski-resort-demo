@@ -1,8 +1,10 @@
 """
 Data generation logic for ski resort telemetry.
 """
+import json
 import random
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from .models import (
@@ -15,11 +17,19 @@ from .models import (
 )
 
 
+def _load_config() -> dict:
+    """Load configuration from config.json."""
+    config_path = Path(__file__).parent / "config.json"
+    with open(config_path) as f:
+        return json.load(f)
+
+
 class DataGenerator:
     """Generates and evolves synthetic ski resort telemetry data."""
 
     def __init__(self):
         """Initialize the generator with realistic starting values."""
+        self.config = _load_config()
         self.current_time = datetime.now()
         
         # Initialize lifts
@@ -123,27 +133,28 @@ class DataGenerator:
 
     def _update_weather(self) -> None:
         """Update weather conditions with gradual random walks."""
-        # Temperature drift
-        temp_delta = random.uniform(-0.3, 0.3)
+        cfg = self.config["weather"]
+        d = cfg["temperature_drift"]
+        temp_delta = random.uniform(-d, d)
         new_temp = self.weather.temperature + temp_delta
         self.weather.temperature = max(-15, min(5, new_temp))
         
-        # Wind speed drift
-        wind_delta = random.uniform(-2, 2)
+        d = cfg["wind_speed_drift"]
+        wind_delta = random.uniform(-d, d)
         new_wind = self.weather.wind_speed + wind_delta
         self.weather.wind_speed = max(0, min(80, new_wind))
         
-        # Snow intensity drift
-        snow_delta = random.uniform(-0.2, 0.2)
+        d = cfg["snow_intensity_drift"]
+        snow_delta = random.uniform(-d, d)
         new_snow = self.weather.snow_intensity + snow_delta
         self.weather.snow_intensity = max(0, min(5, new_snow))
         
-        # Visibility drift (inverse relationship with snow/wind)
-        vis_delta = random.uniform(-100, 100)
+        d = cfg["visibility_drift"]
+        vis_delta = random.uniform(-d, d)
         if self.weather.snow_intensity > 2:
-            vis_delta -= 200
+            vis_delta -= d * 2
         if self.weather.wind_speed > 40:
-            vis_delta -= 150
+            vis_delta -= d * 1.5
         new_vis = self.weather.visibility + vis_delta
         self.weather.visibility = max(50, min(10000, new_vis))
         
@@ -151,20 +162,19 @@ class DataGenerator:
 
     def _update_lifts(self) -> None:
         """Update lift operations."""
+        cfg = self.config["lifts"]
         for lift in self.lifts:
-            # Queue length fluctuates
-            queue_delta = random.randint(-10, 10)
+            d = cfg["queue_drift"]
+            queue_delta = random.randint(-d, d)
             new_queue = lift.queue_length + queue_delta
             lift.queue_length = max(0, min(200, new_queue))
             
-            # Occasionally change status (1% chance)
-            if random.random() < 0.01:
+            if random.random() < cfg["status_change_probability"]:
                 if lift.status == "open":
                     lift.status = random.choice(["closed", "maintenance"])
                 else:
                     lift.status = "open"
             
-            # Recalculate wait time from queue and throughput
             if lift.status == "open" and lift.throughput_rate > 0:
                 lift.wait_time_minutes = round((lift.queue_length / lift.throughput_rate) * 60, 1)
             else:
@@ -174,20 +184,19 @@ class DataGenerator:
 
     def _update_safety(self) -> None:
         """Update safety metrics and generate occasional incidents."""
-        # Avalanche risk drifts slowly
-        risk_delta = random.uniform(-0.02, 0.02)
+        cfg = self.config["safety"]
+        d = cfg["risk_drift"]
+        risk_delta = random.uniform(-d, d)
         
-        # Risk increases with wind and snow
         if self.weather.wind_speed > 50:
-            risk_delta += 0.01
+            risk_delta += d * 0.5
         if self.weather.snow_intensity > 3:
-            risk_delta += 0.01
+            risk_delta += d * 0.5
         
         new_risk = self.safety.avalanche_risk_index + risk_delta
         self.safety.avalanche_risk_index = max(0, min(1, new_risk))
         
-        # Occasionally generate incidents (0.5% chance per tick)
-        if random.random() < 0.005:
+        if random.random() < cfg["incident_probability"]:
             incident = self._generate_incident()
             self._incident_history.append(incident)
             # Keep only last 20 incidents
@@ -231,34 +240,30 @@ class DataGenerator:
 
     def _update_slopes(self) -> None:
         """Update slope conditions based on weather and safety."""
+        cfg = self.config["slopes"]
         for slope in self.slopes:
-            # Snow depth drifts (accumulates during snowfall)
-            depth_delta = random.uniform(-0.5, 0.5)
+            d = cfg["depth_drift"]
+            depth_delta = random.uniform(-d, d)
             if self.weather.snow_intensity > 1:
-                depth_delta += self.weather.snow_intensity * 0.3
+                depth_delta += self.weather.snow_intensity * 0.1
             
             new_depth = slope.snow_depth_cm + depth_delta
             slope.snow_depth_cm = round(max(0, new_depth), 1)
             
-            # Close black slopes if avalanche risk is very high
             if slope.difficulty == "black" and self.safety.avalanche_risk_index > 0.8:
                 slope.is_open = False
             
-            # Close black and red slopes if wind is too high
             if slope.difficulty in ["black", "red"] and self.weather.wind_speed > 60:
                 slope.is_open = False
             
-            # Reopen slopes if conditions improve (10% chance per tick if closed)
-            if not slope.is_open and random.random() < 0.1:
+            if not slope.is_open and random.random() < cfg["reopen_probability"]:
                 if not (slope.difficulty == "black" and self.safety.avalanche_risk_index > 0.8):
                     if not (slope.difficulty in ["black", "red"] and self.weather.wind_speed > 60):
                         slope.is_open = True
             
-            # Occasionally groom green and blue slopes (0.5% chance)
-            if slope.difficulty in ["green", "blue"] and random.random() < 0.005:
+            if slope.difficulty in ["green", "blue"] and random.random() < cfg["groom_probability"]:
                 slope.groomed = True
-            # Ungroomed after time (1% chance if currently groomed)
-            elif slope.groomed and random.random() < 0.01:
+            elif slope.groomed and random.random() < cfg["ungroom_probability"]:
                 slope.groomed = False
 
     def get_state(self) -> ResortState:

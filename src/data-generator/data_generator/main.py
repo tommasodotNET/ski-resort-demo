@@ -39,16 +39,15 @@ async def data_update_loop():
     
     while True:
         try:
-            # Update data
             generator.update()
             
-            # Random interval between 1-3 seconds
-            interval = random.uniform(1.0, 3.0)
+            cfg = generator.config["update_interval_seconds"]
+            interval = random.uniform(cfg["min"], cfg["max"])
             await asyncio.sleep(interval)
             
         except Exception as e:
             logger.error(f"Error in data update loop: {e}", exc_info=True)
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
 
 @asynccontextmanager

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchWeather } from '../lib/data-api';
+import { usePollingInterval } from '../lib/use-config';
 import {
   BarChart,
   Bar,
@@ -19,13 +20,14 @@ interface WeatherData {
 
 export default function WeatherPanel() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  const pollingMs = usePollingInterval();
 
   useEffect(() => {
     const load = () => fetchWeather().then(setWeather).catch(console.error);
     load();
-    const id = setInterval(load, 3000);
+    const id = setInterval(load, pollingMs);
     return () => clearInterval(id);
-  }, []);
+  }, [pollingMs]);
 
   if (!weather) {
     return (

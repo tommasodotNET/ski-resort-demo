@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchSafety } from '../lib/data-api';
+import { usePollingInterval } from '../lib/use-config';
 
 interface Incident {
   incident_type: string;
@@ -23,13 +24,14 @@ const riskColors: Record<string, string> = {
 
 export default function SafetyPanel() {
   const [safety, setSafety] = useState<SafetyData | null>(null);
+  const pollingMs = usePollingInterval();
 
   useEffect(() => {
     const load = () => fetchSafety().then(setSafety).catch(console.error);
     load();
-    const id = setInterval(load, 3000);
+    const id = setInterval(load, pollingMs);
     return () => clearInterval(id);
-  }, []);
+  }, [pollingMs]);
 
   if (!safety) {
     return (

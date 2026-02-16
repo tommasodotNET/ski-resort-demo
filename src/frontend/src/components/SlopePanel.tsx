@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchSlopes } from '../lib/data-api';
+import { usePollingInterval } from '../lib/use-config';
 
 interface Slope {
   name: string;
@@ -18,6 +19,7 @@ const difficultyStyle: Record<string, { color: string; label: string }> = {
 
 export default function SlopePanel() {
   const [slopes, setSlopes] = useState<Slope[]>([]);
+  const pollingMs = usePollingInterval();
 
   useEffect(() => {
     const load = () =>
@@ -25,9 +27,9 @@ export default function SlopePanel() {
         .then((d) => setSlopes(Array.isArray(d) ? d : d.slopes ?? []))
         .catch(console.error);
     load();
-    const id = setInterval(load, 3000);
+    const id = setInterval(load, pollingMs);
     return () => clearInterval(id);
-  }, []);
+  }, [pollingMs]);
 
   if (!slopes.length) {
     return (

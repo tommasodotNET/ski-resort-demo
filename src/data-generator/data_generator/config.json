@@ -1,0 +1,26 @@
+{
+  "update_interval_seconds": {
+    "min": 5,
+    "max": 10
+  },
+  "weather": {
+    "temperature_drift": 0.1,
+    "wind_speed_drift": 0.5,
+    "snow_intensity_drift": 0.05,
+    "visibility_drift": 30
+  },
+  "lifts": {
+    "queue_drift": 3,
+    "status_change_probability": 0.002
+  },
+  "safety": {
+    "risk_drift": 0.005,
+    "incident_probability": 0.001
+  },
+  "slopes": {
+    "depth_drift": 0.1,
+    "reopen_probability": 0.02,
+    "groom_probability": 0.001,
+    "ungroom_probability": 0.002
+  }
+}

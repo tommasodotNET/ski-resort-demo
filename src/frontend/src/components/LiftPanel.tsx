@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchLifts } from '../lib/data-api';
+import { usePollingInterval } from '../lib/use-config';
 
 interface Lift {
   name: string;
@@ -16,6 +17,7 @@ const statusColor: Record<string, string> = {
 
 export default function LiftPanel() {
   const [lifts, setLifts] = useState<Lift[]>([]);
+  const pollingMs = usePollingInterval();
 
   useEffect(() => {
     const load = () =>
@@ -23,9 +25,9 @@ export default function LiftPanel() {
         .then((d) => setLifts(Array.isArray(d) ? d : d.lifts ?? []))
         .catch(console.error);
     load();
-    const id = setInterval(load, 3000);
+    const id = setInterval(load, pollingMs);
     return () => clearInterval(id);
-  }, []);
+  }, [pollingMs]);
 
   if (!lifts.length) {
     return (
