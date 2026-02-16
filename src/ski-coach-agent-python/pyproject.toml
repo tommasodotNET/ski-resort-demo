@@ -1,0 +1,42 @@
+[project]
+name = "ski-coach-agent-python"
+version = "0.1.0"
+description = "Python-based ski coach agent for AlpineAI ski resort using Microsoft Agent Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.104.1",
+    "uvicorn>=0.24.0",
+    
+    # Data validation
+    "pydantic>=2.5.0",
+    
+    # HTTP client
+    "httpx>=0.25.0",
+    
+    # OpenTelemetry for observability
+    "opentelemetry-api>=1.33.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.33.0",
+    "opentelemetry-instrumentation-fastapi>=0.54b0",
+    "opentelemetry-sdk>=1.33.0",
+    "grpcio>=1.50.0",
+    
+    # Microsoft Agent Framework dependencies
+    "agent-framework",
+    "agent-framework-azure",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "httpx>=0.25.0",
+]
+prerelease = "allow"
+
+[project.scripts]
+start = "ski_coach_agent_python.main:main"
