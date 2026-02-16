@@ -12,6 +12,7 @@ export default function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const [contextId, setContextId] = useState<string | undefined>(undefined);
   const endRef = useRef<HTMLDivElement>(null);
+  const accRef = useRef('');
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -31,11 +32,9 @@ export default function ChatPanel() {
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', text }]);
     setLoading(true);
+    accRef.current = '';
 
-    const assistantMessage: ChatMessage = { role: 'agent', text: '' };
-    setMessages((prev) => [...prev, assistantMessage]);
-
-    let accumulatedContent = '';
+    setMessages((prev) => [...prev, { role: 'agent', text: '' }]);
 
     try {
       for await (const event of sendMessageStream(text, contextId)) {
@@ -43,15 +42,16 @@ export default function ChatPanel() {
           setContextId(event.contextId);
         }
         if (event.content) {
-          accumulatedContent += event.content;
+          accRef.current += event.content;
+          const snapshot = accRef.current;
           setMessages((prev) => {
             const next = [...prev];
-            next[next.length - 1] = { role: 'agent', text: accumulatedContent };
+            next[next.length - 1] = { role: 'agent', text: snapshot };
             return next;
           });
         }
       }
-      if (!accumulatedContent) {
+      if (!accRef.current) {
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
