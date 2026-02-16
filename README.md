@@ -54,11 +54,7 @@ An AI-powered ski resort concierge that coordinates weather intelligence, lift t
 
 ### Install Aspire CLI
 
-```bash
-dotnet tool install -g aspirate
-# or if using workload:
-dotnet workload install aspire
-```
+Refer to the [official Aspire documentation](https://aspire.dev/get-started/install-cli/) for installation instructions.
 
 ## Setup
 
