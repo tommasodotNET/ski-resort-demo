@@ -1,460 +1,180 @@
-Perfect.
-Below is a **clean, implementation-oriented Markdown architecture document** designed so another LLM can use it to generate the full system.
-
-It is explicit, structured, and prescriptive.
-
-No storytelling — only architecture.
-
----
-
-# 🏔️ AlpineAI – Multi-Agent Ski Resort System
-
-## Overview
-
-AlpineAI is a distributed, cloud-native, multi-agent system representing an intelligent ski resort platform.
-
-The system is built using:
-
-* **Microsoft Agent Framework (MAF)** as the agent orchestration layer
-* **Agent-to-Agent (A2A)** protocol to expose each agent
-* **[Aspire](https://aspire.dev)** as the local development orchestrator
-* Polyglot microservices (.NET + Python)
-* Real-time fake telemetry generator
-* Event-driven communication
-* A real-time frontend dashboard
-
-The central orchestrator is:
-
-> **Ski Resort Advisor Agent** (built in .NET)
-
-All specialist agents are exposed via A2A and consumed as tools.
-
----
-
-# 1. High-Level Architecture
-
-## Core Components
-
-| Component                | Language                       | Role                              |
-| ------------------------ | ------------------------------ | --------------------------------- |
-| Ski Resort Advisor Agent | .NET                           | Orchestrator agent                |
-| Weather Agent            | Python                         | Weather intelligence              |
-| Lift Traffic Agent       | .NET                           | Lift congestion analysis          |
-| Safety Agent             | Python                         | Risk & slope safety validation    |
-| Ski Coach Agent          | Python                         | Skill-based slope recommendation  |
-| Real-Time Data Generator | Python                         | Fake telemetry + weather + events |
-| Event Bus                | Cloud-native (Dapr or similar) | Pub/Sub event backbone            |
-| Frontend Dashboard       | React / Next.js                | Visualization UI                  |
-| API Gateway              | .NET                           | Unified access point              |
-
----
-
-# 2. Agent Framework Layer
-
-## Microsoft Agent Framework (MAF)
-
-All agents must:
-
-* Be implemented using Microsoft Agent Framework
-* Expose capabilities as tools
-* Support A2A protocol
-* Register with discovery mechanism
-
-Each agent must:
-
-* Expose:
-
-  * `/agent/manifest`
-  * `/agent/invoke`
-  * `/agent/health`
-* Support structured tool definitions
-* Use JSON schema contracts
-
----
-
-# 3. Ski Resort Advisor Agent (.NET)
-
-## Role
-
-The Ski Resort Advisor Agent is the system orchestrator.
-
-It:
-
-* Receives user input
-* Performs intent decomposition
-* Invokes specialist agents via A2A
-* Synthesizes final response
-* Applies safety overrides
-
-## Responsibilities
-
-* Register other agents as tools
-* Manage conversation memory
-* Enforce priority rules (Safety > Weather > Coach)
-* Aggregate distributed responses
-
-## Tools It Consumes
-
-| Tool                   | Provided By        |
-| ---------------------- | ------------------ |
-| get_current_conditions | Weather Agent      |
-| get_forecast           | Weather Agent      |
-| get_lift_status        | Lift Traffic Agent |
-| get_wait_times         | Lift Traffic Agent |
-| evaluate_risk          | Safety Agent       |
-| recommend_slope        | Ski Coach Agent    |
-
-## Technology
-
-* .NET 8+
-* Microsoft Agent Framework
-* ASP.NET Core
-* A2A client
-* SignalR (for live frontend updates)
-
----
-
-# 4. Weather Agent (Python)
-
-## Role
-
-Provides real-time weather and snow conditions.
-
-## Data Source
-
-Consumes data from:
-
-* Real-Time Fake Data Generator
-
-## Tools Exposed
-
-* `get_current_conditions()`
-* `get_forecast(hours: int)`
-* `is_storm_incoming()`
-
-## Responsibilities
-
-* Aggregate telemetry
-* Detect storm thresholds
-* Provide structured condition summaries
-
-## Technology
-
-* Python 3.11+
-* FastAPI
-* Microsoft Agent Framework (Python SDK)
-* A2A endpoint exposure
-
----
-
-# 5. Lift Traffic Agent (.NET)
-
-## Role
-
-Manages lift telemetry and congestion intelligence.
-
-## Data Source
-
-Consumes:
-
-* Lift queue events
-* Lift operational status
-* Telemetry stream
-
-## Tools Exposed
-
-* `get_lift_status(lift_id)`
-* `get_wait_times()`
-* `suggest_less_busy_area()`
-
-## Responsibilities
-
-* Compute congestion score
-* Identify overload scenarios
-* Emit congestion events
-
-## Technology
-
-* .NET 8
-* Microsoft Agent Framework
-* Background hosted service for event consumption
-
----
-
-# 6. Safety Agent (Python)
-
-## Role
-
-Evaluates risk across slopes.
-
-## Data Inputs
-
-* Wind speed
-* Snow intensity
-* Avalanche risk index
-* Lift failures
-* Visibility metrics
-
-## Tools Exposed
-
-* `evaluate_risk(area)`
-* `is_slope_safe(slope_id)`
-* `get_closed_slopes()`
-
-## Rules
-
-* Wind > threshold → risk level increase
-* Avalanche index high → slope closure
-* Visibility low + steep slope → unsafe
-
-## Technology
-
-* Python
-* FastAPI
-* Microsoft Agent Framework
-* Rule engine logic
-
----
-
-# 7. Ski Coach Agent (Python)
-
-## Role
-
-Recommends slopes based on:
-
-* Skill level
-* Weather
-* Congestion
-* Safety
-
-## Tools Exposed
-
-* `recommend_slope(skill_level, preferences)`
-* `build_day_plan(skill_level)`
-
-## Data Source
-
-* Static slope metadata
-* Conditions from Weather Agent
-* Congestion from Lift Traffic Agent
-
-Note: It may call other agents via A2A if needed.
-
----
-
-# 8. Real-Time Fake Data Generator (Python)
-
-## Purpose
-
-Continuously emits synthetic but realistic data so system behaves as live.
-
-## Generates
-
-### Weather Data
-
-* Temperature
-* Wind speed
-* Snow intensity
-* Visibility
-
-### Lift Telemetry
-
-* Queue length
-* Lift status (open/closed)
-* Throughput rate
-
-### Safety Signals
-
-* Avalanche index
-* Incident reports
-
-## Implementation
-
-* Async Python service
-* Emits events every 1–3 seconds
-* Publishes to Event Bus
-* Also exposes REST endpoint for latest state
-
----
-
-# 9. Event-Driven Backbone
-
-Use:
-
-* Dapr Pub/Sub OR
-* Azure Service Bus OR
-* Kafka (for demo simplicity optional)
-
-Events:
-
-* `WeatherUpdated`
-* `LiftStatusChanged`
-* `QueueUpdated`
-* `SafetyAlertRaised`
-* `SlopeClosed`
-
-All agents subscribe to relevant topics.
-
----
-
-# 10. Frontend Dashboard
-
-## Technology
-
-* React or Next.js
-* SignalR client
-* Real-time charts (Recharts or similar)
-
-## Features
-
-### Live Panels
-
-* Weather dashboard
-* Lift wait times
-* Risk heatmap
-* Open/Closed slopes
-* Agent decision trace
-
-### AI Chat Panel
-
-* User interacts with Ski Resort Advisor
-* Displays:
-
-  * Tool calls
-  * Agent responses
-  * Final synthesized output
-
----
-
-# 11. Observability
-
-## Required
-
-* Distributed tracing
-* Correlation IDs
-* Structured logging
-* Metrics per agent
-
-## Recommended Stack
-
-* OpenTelemetry
-* Azure Monitor OR Prometheus + Grafana
-
----
-
-# 12. Deployment Target
-
-* Azure Container Apps
-* Container per agent
-* Internal Dapr sidecar
-* Horizontal scaling enabled
-* Managed identity for secure agent communication
-
----
-
-# 13. Local Development Orchestration (Aspire)
-
-## Overview
-
-[Aspire](https://aspire.dev) is used as the local development orchestrator for AlpineAI.
-
-Aspire provides:
-
-* Service discovery and orchestration across all agents and services
-* Built-in dashboard for logs, traces, and metrics
-* Simplified local environment setup (no need for manual Docker Compose wiring)
-* Native OpenTelemetry integration
-
-## Version
-
-* Aspire **13.1.1** (latest)
+# 🏔️ AlpineAI – Multi-Agent Ski Resort Demo
+
+A distributed, multi-agent ski resort system built with **Microsoft Agent Framework (MAF)**, the **A2A protocol**, and **.NET Aspire**.
+
+An AI-powered ski resort concierge that coordinates weather intelligence, lift traffic, safety evaluation, and personalized coaching through a network of specialist agents — all orchestrated by a central advisor and displayed on a real-time dashboard.
+
+![.NET](https://img.shields.io/badge/.NET_10-512BD4?style=flat&logo=dotnet&logoColor=white)
+![Python](https://img.shields.io/badge/Python_3.11+-3776AB?style=flat&logo=python&logoColor=white)
+![Aspire](https://img.shields.io/badge/Aspire_13.1-512BD4?style=flat&logo=dotnet&logoColor=white)
+![React](https://img.shields.io/badge/React_+_Vite-61DAFB?style=flat&logo=react&logoColor=black)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Frontend (Vite + React)            │
+│         Real-time dashboard + AI Chat (A2A)         │
+└──────────────┬──────────────────────┬───────────────┘
+               │ REST                 │ A2A (streaming)
+               ▼                      ▼
+┌──────────────────────┐  ┌──────────────────────────┐
+│   Data Generator     │  │   Advisor Agent (.NET)   │
+│   (Python/FastAPI)   │  │   Orchestrator via A2A   │
+└──────────────────────┘  └────┬───┬───┬───┬─────────┘
+                               │   │   │   │  A2A
+                    ┌──────────┘   │   │   └──────────┐
+                    ▼              ▼   ▼              ▼
+             ┌───────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐
+             │  Weather   │ │   Lift   │ │  Safety   │ │Ski Coach │
+             │  Agent     │ │  Traffic │ │  Agent    │ │  Agent   │
+             │ (Python)   │ │  (.NET)  │ │ (Python)  │ │ (Python) │
+             └───────────┘ └──────────┘ └───────────┘ └──────────┘
+```
+
+| Component | Language | Role |
+|---|---|---|
+| **Advisor Agent** | .NET | Central orchestrator — routes questions to specialist agents via A2A |
+| **Weather Agent** | Python | Current conditions, forecasts, storm alerts |
+| **Lift Traffic Agent** | .NET | Lift status, wait times, congestion analysis |
+| **Safety Agent** | Python | Risk evaluation, slope safety, closures |
+| **Ski Coach Agent** | Python | Personalized slope recommendations, day plans |
+| **Data Generator** | Python | Continuously generates synthetic resort telemetry |
+| **Frontend** | React/Vite | Real-time dashboard with AI chat panel |
+
+## Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Python 3.11+](https://www.python.org/downloads/)
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [Node.js 20+](https://nodejs.org/)
+- [.NET Aspire CLI](https://learn.microsoft.com/dotnet/aspire/fundamentals/setup-tooling)
+- An **Azure AI Foundry** resource with a `gpt-4.1` (or similar) deployment
+- **Azure CLI** authenticated (`az login`)
+
+### Install Aspire CLI
+
+```bash
+dotnet tool install -g aspirate
+# or if using workload:
+dotnet workload install aspire
+```
+
+## Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/tommasodotNET/ski-resort-demo.git
+cd ski-resort-demo
+```
+
+### 2. Configure Azure settings
+
+Edit `src/apphost.settings.Development.json` with your Azure details:
+
+```json
+{
+    "Azure": {
+        "TenantId": "<your-tenant-id>",
+        "SubscriptionId": "<your-subscription-id>",
+        "AllowResourceGroupCreation": true,
+        "ResourceGroup": "<your-resource-group>",
+        "Location": "<your-azure-region>",
+        "CredentialSource": "AzureCli"
+    },
+    "Parameters": {
+        "existingFoundryName": "<your-azure-ai-foundry-name>",
+        "existingFoundryResourceGroup": "<foundry-resource-group>"
+    }
+}
+```
+
+> **Note:** The Azure AI Foundry resource must have a chat completion model deployed (e.g., `gpt-4.1`). The deployment name is configured in the Aspire AppHost.
+
+### 3. Run the application
+
+From the `src/` directory:
+
+```bash
+cd src
+aspire run
+```
+
+This single command starts **all services**:
+- 2 .NET agents (advisor + lift traffic)
+- 3 Python agents (weather + safety + ski coach)
+- Data generator (Python/FastAPI)
+- Frontend (Vite dev server)
+- Cosmos DB emulator
+
+Open the **Aspire dashboard** (URL shown in terminal output) to see all services, logs, and distributed traces.
+
+The **frontend** will be available at the URL assigned by Aspire (shown in the dashboard).
+
+## Project Structure
+
+```
+src/
+├── apphost.cs                      # Aspire orchestration (all services wired here)
+├── apphost.settings.Development.json  # Azure configuration
+├── advisor-agent-dotnet/           # .NET orchestrator agent (A2A)
+├── lift-traffic-agent-dotnet/      # .NET lift traffic agent (A2A)
+├── weather-agent-python/           # Python weather agent (A2A)
+├── safety-agent-python/            # Python safety agent (A2A)
+├── ski-coach-agent-python/         # Python ski coach agent (A2A)
+├── data-generator/                 # Python FastAPI data generator
+├── frontend/                       # Vite + React + Tailwind dashboard
+├── shared-services/                # .NET shared library (Cosmos, thread store)
+└── service-defaults/               # Aspire service defaults
+```
+
+## Configuration
+
+### Data Generator
+
+The data generation speed and drift magnitudes are configurable via `src/data-generator/data_generator/config.json`:
+
+```json
+{
+  "update_interval_seconds": { "min": 5, "max": 10 },
+  "weather": { "temperature_drift": 0.1, "wind_speed_drift": 0.5, ... },
+  "lifts": { "queue_drift": 3, "status_change_probability": 0.002 },
+  ...
+}
+```
+
+### Frontend
+
+The dashboard polling interval is configurable via `src/frontend/public/config.json`:
+
+```json
+{
+  "pollingIntervalMs": 10000
+}
+```
+
+Changes are picked up automatically without restarting.
 
 ## How It Works
 
-The Aspire **AppHost** project defines the entire distributed application graph:
+1. **Data Generator** continuously produces synthetic weather, lift, slope, and safety telemetry via a REST API.
 
-* Each agent (.NET and Python) is registered as a project or executable resource
-* The Real-Time Data Generator runs as a background resource
-* The Frontend Dashboard is registered as a Node.js app resource
-* Service references and environment variables are wired automatically
-* All dotnet projects must reference the [service-default project](./src/service-defaults/service-defaults.csproj) to implement common configuration calling `builder.AddServiceDefaults()` and `app.MapDfeltEndpoints()` in their startup
+2. **Specialist agents** (weather, lift, safety, coach) each wrap specific tools using MAF and expose them over the **A2A protocol**. Each agent calls the data generator's API to fetch current conditions.
 
-## Benefits for This System
+3. **Advisor Agent** is the central orchestrator. It registers all specialist agents as tools (via A2A) and selectively invokes only the relevant agents based on the user's question.
 
-* Single `F5` experience to launch all agents, the data generator, and the frontend
-* Centralized dashboard showing health, logs, and distributed traces across all agents
-* Automatic port management and service endpoint injection
-* No Docker Compose required for local development
+4. **Frontend** displays real-time data panels (weather, lifts, slopes, safety) by polling the data generator, and provides an AI chat panel that streams responses from the advisor agent via the A2A protocol.
 
-## Documentation
+## Key Technologies
 
-* Official site: [https://aspire.dev](https://aspire.dev)
+- **[Microsoft Agent Framework (MAF)](https://github.com/microsoft/agents)** — Agent creation, tool registration, and orchestration
+- **[A2A Protocol](https://github.com/google/A2A)** — Agent-to-agent communication over JSON-RPC + SSE streaming
+- **[.NET Aspire](https://aspire.dev)** — Distributed app orchestration, service discovery, observability
+- **[Azure AI Foundry](https://ai.azure.com)** — LLM backend (GPT-4.1)
+- **[Vite](https://vitejs.dev) + [React](https://react.dev)** — Frontend dashboard
+- **[Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/)** — Conversation thread persistence
 
----
+## Further Reading
 
-# 14. System Interaction Flow
-
-## Example Request
-
-User:
-"I am intermediate, I dislike crowds, and wind is strong. Where should I ski?"
-
-### Flow
-
-1. Ski Resort Advisor receives request
-2. Calls Weather Agent
-3. Calls Lift Traffic Agent
-4. Calls Safety Agent
-5. Calls Ski Coach Agent
-6. Applies safety override if needed
-7. Synthesizes response
-8. Emits decision trace to frontend
-
----
-
-# 15. Non-Functional Requirements
-
-* All agents stateless
-* Horizontal scalability
-* Resilient to agent downtime
-* Safety agent always has highest priority
-* Real-time update latency < 2 seconds
-* System must run locally with Aspire (see section 13)
-
----
-
-# 16. Folder Structure (Suggested)
-
-```
-/alpine-ai
-  /advisor-agent-dotnet
-  /lift-traffic-agent-dotnet
-  /weather-agent-python
-  /safety-agent-python
-  /ski-coach-agent-python
-  /data-generator
-  /frontend
-  /infrastructure
-```
-
----
-
-# 17. Key Architectural Principles
-
-* Agent-as-a-Tool
-* Single responsibility per agent
-* Event-driven reactivity
-* Orchestrated intelligence
-* Safety-first overrides
-* Real-time observability
-
----
-
-If you want next, we can:
-
-* Write the Advisor agent skeleton in .NET with MAF
-* Define A2A contracts formally
-* Design the event schema
-* Or generate a Docker Compose file for local execution
-
-This is now a *serious* multi-agent cloud-native demo. ⛷️
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed system architecture document.
