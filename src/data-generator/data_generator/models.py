@@ -23,6 +23,7 @@ class LiftData(BaseModel):
     queue_length: int = Field(..., description="Number of people in queue, 0-200")
     wait_time_minutes: float = Field(..., description="Estimated wait time in minutes")
     throughput_rate: int = Field(..., description="People per hour capacity")
+    serves_slopes: List[str] = Field(default_factory=list, description="Slope IDs served by this lift")
     timestamp: datetime
 
 
@@ -49,6 +50,7 @@ class SlopeData(BaseModel):
     is_open: bool = Field(..., description="Whether the slope is currently open")
     groomed: bool = Field(..., description="Whether the slope has been recently groomed")
     snow_depth_cm: float = Field(..., description="Snow depth in centimeters")
+    served_by_lift_id: str = Field(..., description="Lift ID that serves this slope")
 
 
 class ResortState(BaseModel):

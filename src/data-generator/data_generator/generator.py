@@ -59,16 +59,17 @@ class DataGenerator:
 
     def _create_initial_lifts(self) -> List[LiftData]:
         """Create initial lift configurations."""
+        # Each lift serves specific slopes (defined in _create_initial_slopes)
         lift_configs = [
-            ("gondola-1", "Summit Gondola", 2400, "open"),
-            ("chairlift-alpha", "Alpine Express", 1800, "open"),
-            ("chairlift-bravo", "Eagle Chair", 1600, "open"),
-            ("t-bar-1", "Beginner T-Bar", 800, "open"),
-            ("magic-carpet-1", "Kids Magic Carpet", 400, "open"),
+            ("gondola-1", "Summit Gondola", 2400, "open", ["summit-chute", "avalanche-alley"]),
+            ("chairlift-alpha", "Alpine Express", 1800, "open", ["alpine-meadow", "north-face"]),
+            ("chairlift-bravo", "Eagle Chair", 1600, "open", ["eagle-ridge", "timber-bowl"]),
+            ("t-bar-1", "Beginner T-Bar", 800, "open", ["valley-run"]),
+            ("magic-carpet-1", "Kids Magic Carpet", 400, "open", ["sunrise-trail"]),
         ]
         
         lifts = []
-        for lift_id, name, throughput, status in lift_configs:
+        for lift_id, name, throughput, status, serves_slopes in lift_configs:
             queue = random.randint(10, 80)
             wait_time = (queue / throughput) * 60 if throughput > 0 else 0
             
@@ -79,6 +80,7 @@ class DataGenerator:
                 queue_length=queue,
                 wait_time_minutes=round(wait_time, 1),
                 throughput_rate=throughput,
+                serves_slopes=serves_slopes,
                 timestamp=self.current_time,
             ))
         
@@ -87,18 +89,18 @@ class DataGenerator:
     def _create_initial_slopes(self) -> List[SlopeData]:
         """Create initial slope configurations."""
         slope_configs = [
-            ("valley-run", "Valley Run", "green", True, True, 85),
-            ("sunrise-trail", "Sunrise Trail", "green", True, True, 90),
-            ("alpine-meadow", "Alpine Meadow", "blue", True, True, 105),
-            ("eagle-ridge", "Eagle Ridge", "blue", True, False, 95),
-            ("timber-bowl", "Timber Bowl", "blue", True, False, 110),
-            ("north-face", "North Face", "red", True, False, 120),
-            ("summit-chute", "Summit Chute", "black", True, False, 130),
-            ("avalanche-alley", "Avalanche Alley", "black", True, False, 125),
+            ("valley-run", "Valley Run", "green", True, True, 85, "t-bar-1"),
+            ("sunrise-trail", "Sunrise Trail", "green", True, True, 90, "magic-carpet-1"),
+            ("alpine-meadow", "Alpine Meadow", "blue", True, True, 105, "chairlift-alpha"),
+            ("eagle-ridge", "Eagle Ridge", "blue", True, False, 95, "chairlift-bravo"),
+            ("timber-bowl", "Timber Bowl", "blue", True, False, 110, "chairlift-bravo"),
+            ("north-face", "North Face", "red", True, False, 120, "chairlift-alpha"),
+            ("summit-chute", "Summit Chute", "black", True, False, 130, "gondola-1"),
+            ("avalanche-alley", "Avalanche Alley", "black", True, False, 125, "gondola-1"),
         ]
         
         slopes = []
-        for slope_id, name, difficulty, is_open, groomed, base_depth in slope_configs:
+        for slope_id, name, difficulty, is_open, groomed, base_depth, lift_id in slope_configs:
             depth_variance = random.uniform(-10, 10)
             
             slopes.append(SlopeData(
@@ -108,6 +110,7 @@ class DataGenerator:
                 is_open=is_open,
                 groomed=groomed,
                 snow_depth_cm=round(base_depth + depth_variance, 1),
+                served_by_lift_id=lift_id,
             ))
         
         return slopes

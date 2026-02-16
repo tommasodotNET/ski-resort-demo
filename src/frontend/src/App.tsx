@@ -1,7 +1,6 @@
 import WeatherPanel from './components/WeatherPanel';
-import LiftPanel from './components/LiftPanel';
+import SlopesAndLiftsPanel from './components/SlopesAndLiftsPanel';
 import SafetyPanel from './components/SafetyPanel';
-import SlopePanel from './components/SlopePanel';
 import ChatPanel from './components/ChatPanel';
 
 export default function App() {
@@ -20,9 +19,10 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-[2] p-4 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-min">
           <WeatherPanel />
-          <LiftPanel />
           <SafetyPanel />
-          <SlopePanel />
+          <div className="md:col-span-2">
+            <SlopesAndLiftsPanel />
+          </div>
         </main>
 
         <aside className="flex-1 p-4 pl-0 min-w-[320px] max-w-[480px]">
