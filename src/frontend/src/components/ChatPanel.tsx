@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { sendMessage } from '../lib/a2a-client';
+import { sendMessageStream, resetClient } from '../lib/a2a-client';
 
 interface ChatMessage {
   role: 'user' | 'agent';
@@ -11,7 +10,7 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [threadId, setThreadId] = useState(() => uuidv4());
+  const [contextId, setContextId] = useState<string | undefined>(undefined);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,7 +19,8 @@ export default function ChatPanel() {
 
   function handleNewConversation() {
     setMessages([]);
-    setThreadId(uuidv4());
+    setContextId(undefined);
+    resetClient();
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -32,19 +32,26 @@ export default function ChatPanel() {
     setMessages((prev) => [...prev, { role: 'user', text }]);
     setLoading(true);
 
-    let agentText = '';
-    setMessages((prev) => [...prev, { role: 'agent', text: '' }]);
+    const assistantMessage: ChatMessage = { role: 'agent', text: '' };
+    setMessages((prev) => [...prev, assistantMessage]);
+
+    let accumulatedContent = '';
 
     try {
-      for await (const chunk of sendMessage(text, threadId, (id) => setThreadId(id))) {
-        agentText += chunk;
-        setMessages((prev) => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'agent', text: agentText };
-          return next;
-        });
+      for await (const event of sendMessageStream(text, contextId)) {
+        if (event.contextId) {
+          setContextId(event.contextId);
+        }
+        if (event.content) {
+          accumulatedContent += event.content;
+          setMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'agent', text: accumulatedContent };
+            return next;
+          });
+        }
       }
-      if (!agentText) {
+      if (!accumulatedContent) {
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
