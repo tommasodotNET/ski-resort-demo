@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/advisor-agent-dotnet/">
+    <Project Path="advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj" />
+  </Folder>
+  <Folder Name="/lift-traffic-agent-dotnet/">
+    <Project Path="lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj" />
+  </Folder>
+  <Folder Name="/shared-services/">
+    <Project Path="shared-services/SharedServices.csproj" />
+  </Folder>
+  <Project Path="service-defaults/service-defaults.csproj" />
+</Solution>

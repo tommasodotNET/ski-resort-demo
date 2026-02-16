@@ -23,7 +23,7 @@ builder.AddAzureChatCompletionsClient(connectionName: "foundry",
 builder.AddKeyedAzureCosmosContainer("conversations",
     configureClientOptions: (option) => option.Serializer = new CosmosSystemTextJsonSerializer());
 builder.Services.AddSingleton<ICosmosThreadRepository, CosmosThreadRepository>();
-builder.Services.AddSingleton<CosmosAgentThreadStore>();
+builder.Services.AddSingleton<CosmosAgentSessionStore>();
 
 // Configure CORS
 builder.Services.AddCors(options =>
@@ -60,7 +60,7 @@ builder.AddAIAgent("advisor-agent", (sp, key) =>
 {
     var chatClient = sp.GetRequiredService<IChatClient>();
 
-    var agent = chatClient.CreateAIAgent(
+    var agent = chatClient.AsAIAgent(
         instructions: @"You are the Ski Resort Advisor, the main AI concierge for AlpineAI ski resort.
 
 You have access to four specialist agents as tools:
@@ -91,7 +91,7 @@ When you DO call agents, synthesize their responses into one clear answer. Menti
     );
 
     return agent;
-}).WithThreadStore((sp, key) => sp.GetRequiredService<CosmosAgentThreadStore>());
+}).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
 
 var app = builder.Build();
 

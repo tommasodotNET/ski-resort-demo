@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -13,59 +15,72 @@ public class CosmosThreadRepository : ICosmosThreadRepository
         [FromKeyedServices("conversations")] Container container,
         ILogger<CosmosThreadRepository> logger)
     {
-        _container = container;
-        _logger = logger;
+        _container = container ?? throw new ArgumentNullException(nameof(container));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task<string?> GetThreadAsync(string key)
+    public async Task<JsonElement?> GetThreadAsync(string key, CancellationToken cancellationToken = default)
     {
         try
         {
-            _logger.LogInformation("Getting thread with key: {Key}", key);
-            
-            var response = await _container.ReadItemAsync<dynamic>(
-                id: key,
-                partitionKey: new PartitionKey(key));
+            var response = await _container.ReadItemAsync<CosmosThreadItem>(
+                key,
+                new PartitionKey(key),
+                cancellationToken: cancellationToken);
 
-            var data = response.Resource.data?.ToString();
-            _logger.LogInformation("Successfully retrieved thread with key: {Key}", key);
-            
-            return data;
+            var jsonElement = JsonSerializer.Deserialize<JsonElement>(response.Resource.SerializedThread);
+            _logger.LogInformation("Successfully retrieved agent thread with key: {Key}", key);
+            return jsonElement;
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            _logger.LogInformation("Thread not found with key: {Key}", key);
+            _logger.LogInformation("Agent thread not found for key: {Key}", key);
             return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting thread with key: {Key}", key);
-            throw;
         }
     }
 
-    public async Task SaveThreadAsync(string key, string serializedSession)
+    public async Task SaveThreadAsync(string key, JsonElement thread, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            _logger.LogInformation("Saving thread with key: {Key}", key);
-            
-            var item = new
-            {
-                id = key,
-                data = serializedSession
-            };
+        var serializedThreadString = JsonSerializer.Serialize(thread);
 
-            await _container.UpsertItemAsync(
-                item: item,
-                partitionKey: new PartitionKey(key));
-
-            _logger.LogInformation("Successfully saved thread with key: {Key}", key);
-        }
-        catch (Exception ex)
+        var threadItem = new CosmosThreadItem
         {
-            _logger.LogError(ex, "Error saving thread with key: {Key}", key);
-            throw;
-        }
+            Id = key,
+            ConversationId = key,
+            SerializedThread = serializedThreadString,
+            LastUpdated = DateTime.UtcNow.ToString("o"),
+            Ttl = -1
+        };
+
+        var requestOptions = new ItemRequestOptions
+        {
+            EnableContentResponseOnWrite = false
+        };
+
+        await _container.UpsertItemAsync(
+            threadItem,
+            new PartitionKey(key),
+            requestOptions: requestOptions,
+            cancellationToken: cancellationToken);
+
+        _logger.LogInformation("Successfully saved agent thread with key: {Key}", key);
+    }
+
+    private class CosmosThreadItem
+    {
+        [JsonPropertyName("id")]
+        public required string Id { get; set; }
+
+        [JsonPropertyName("conversationId")]
+        public required string ConversationId { get; set; }
+
+        [JsonPropertyName("serializedThread")]
+        public required string SerializedThread { get; set; }
+
+        [JsonPropertyName("lastUpdated")]
+        public string LastUpdated { get; set; } = DateTime.UtcNow.ToString("o");
+
+        [JsonPropertyName("ttl")]
+        public int? Ttl { get; set; }
     }
 }

@@ -34,7 +34,7 @@ builder.AddAIAgent("lift-traffic-agent", (sp, key) =>
     var chatClient = sp.GetRequiredService<IChatClient>();
     var tools = sp.GetRequiredService<LiftTrafficTools>().GetFunctions();
 
-    var agent = chatClient.CreateAIAgent(
+    var agent = chatClient.AsAIAgent(
         instructions: @"You are the Lift Traffic Agent for AlpineAI ski resort. You provide real-time lift status, wait times, and congestion analysis. Help skiers find the least crowded areas and plan efficient lift usage.",
         name: key,
         description: "Lift congestion and traffic intelligence agent",
