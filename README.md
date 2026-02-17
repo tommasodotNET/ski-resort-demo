@@ -1,6 +1,6 @@
 # 🏔️ AlpineAI – Multi-Agent Ski Resort Demo
 
-A distributed, multi-agent ski resort system built with **Microsoft Agent Framework (MAF)**, the **A2A protocol**, and **.NET Aspire**.
+A distributed, multi-agent ski resort system built with **Microsoft Agent Framework (MAF)**, the **A2A protocol**, and **Aspire**.
 
 An AI-powered ski resort concierge that coordinates weather intelligence, lift traffic, safety evaluation, and personalized coaching through a network of specialist agents — all orchestrated by a central advisor and displayed on a real-time dashboard.
 
