@@ -166,7 +166,7 @@ Changes are picked up automatically without restarting.
 
 - **[Microsoft Agent Framework (MAF)](https://github.com/microsoft/agents)** — Agent creation, tool registration, and orchestration
 - **[A2A Protocol](https://github.com/google/A2A)** — Agent-to-agent communication over JSON-RPC + SSE streaming
-- **[.NET Aspire](https://aspire.dev)** — Distributed app orchestration, service discovery, observability
+- **[Aspire](https://aspire.dev)** — Distributed app orchestration, service discovery, observability
 - **[Azure AI Foundry](https://ai.azure.com)** — LLM backend (GPT-4.1)
 - **[Vite](https://vitejs.dev) + [React](https://react.dev)** — Frontend dashboard
 - **[Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/)** — Conversation thread persistence
