@@ -14,8 +14,8 @@ var builder = DistributedApplication.CreateBuilder(args);
 var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
 
 var foundry = builder.AddAzureAIFoundry("foundry-ski-resort");
-var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41);
 var project = foundry.AddProject("project-ski-resort");
+var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41);
 
 tenantId.WithParentRelationship(foundry);
 // existingFoundryName.WithParentRelationship(foundry);
