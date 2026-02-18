@@ -78,10 +78,6 @@ Edit `src/apphost.settings.Development.json` with your Azure details:
         "ResourceGroup": "<your-resource-group>",
         "Location": "<your-azure-region>",
         "CredentialSource": "AzureCli"
-    },
-    "Parameters": {
-        "existingFoundryName": "<your-azure-ai-foundry-name>",
-        "existingFoundryResourceGroup": "<foundry-resource-group>"
     }
 }
 ```

@@ -13,13 +13,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 // Configure Azure chat client
-builder.AddAzureChatCompletionsClient(connectionName: "foundry",
+builder.AddAzureChatCompletionsClient(connectionName: "gpt41",
     configureSettings: settings =>
     {
         settings.TokenCredential = new DefaultAzureCredential();
         settings.EnableSensitiveTelemetryData = true;
     })
-    .AddChatClient("gpt-4.1");
+    .AddChatClient();
 
 // Register HttpClientFactory for LiftDataService
 builder.Services.AddHttpClient();

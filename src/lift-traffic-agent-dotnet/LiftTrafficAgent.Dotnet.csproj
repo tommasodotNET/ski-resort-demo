@@ -10,7 +10,7 @@
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.0.0-preview.260212.1" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.0.0-preview.260212.1" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260212.1" />
-    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.1.1-preview.1.26105.8" />
+    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.3.0-pr.14149.gd67070ad" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\service-defaults\service-defaults.csproj" />

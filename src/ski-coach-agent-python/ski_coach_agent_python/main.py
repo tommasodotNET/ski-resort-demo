@@ -35,6 +35,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _configure_from_aspire_connection_string():
+    """Parse Aspire-injected connection string and set Azure OpenAI env vars."""
+    conn_str = os.environ.get("ConnectionStrings__gpt41", "")
+    if not conn_str:
+        return
+    for part in conn_str.split(";"):
+        if "=" in part:
+            key, _, value = part.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key == "Endpoint":
+                os.environ.setdefault("AZURE_OPENAI_ENDPOINT", value)
+            elif key == "Deployment":
+                os.environ.setdefault("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", value)
+
+
 def get_agent_card(host: str, port: int) -> AgentCard:
     """
     Create and return the AgentCard for the ski coach agent.
@@ -89,6 +105,8 @@ def get_agent_card(host: str, port: int) -> AgentCard:
 
 def create_app():
     """Create and configure the FastAPI A2A application."""
+    _configure_from_aspire_connection_string()
+
     port = int(os.environ.get("PORT", 8083))
     host = os.environ.get("HOST", "0.0.0.0")
 
