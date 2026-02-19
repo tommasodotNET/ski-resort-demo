@@ -15,7 +15,8 @@ var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId")
 
 var foundry = builder.AddAzureAIFoundry("foundry-ski-resort");
 var project = foundry.AddProject("project-ski-resort");
-var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41);
+var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41)
+    .WithProperties(configure => configure.SkuCapacity = 150 );
 
 tenantId.WithParentRelationship(foundry);
 // existingFoundryName.WithParentRelationship(foundry);
