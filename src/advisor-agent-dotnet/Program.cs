@@ -17,7 +17,7 @@ builder.AddAzureChatCompletionsClient(connectionName: "gpt41",
         settings.TokenCredential = new DefaultAzureCredential();
         settings.EnableSensitiveTelemetryData = true;
     })
-    .AddChatClient();
+    .AddChatClient().ConfigureOptions(options => options.AllowMultipleToolCalls = true);
 
 // Register Cosmos for conversation storage
 builder.AddKeyedAzureCosmosContainer("conversations",
@@ -89,6 +89,9 @@ When you DO call agents, synthesize their responses into one clear answer. Menti
             coachAgent.AsAIFunction()
         ]
     );
+
+    var ficc = agent.GetService<FunctionInvokingChatClient>();
+    ficc?.AllowConcurrentInvocation = true;
 
     return agent;
 }).WithSessionStore((sp, key) => sp.GetRequiredService<CosmosAgentSessionStore>());
