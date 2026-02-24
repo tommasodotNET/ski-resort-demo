@@ -19,8 +19,6 @@ var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41)
     .WithProperties(configure => configure.SkuCapacity = 150 );
 
 tenantId.WithParentRelationship(foundry);
-// existingFoundryName.WithParentRelationship(foundry);
-// existingFoundryResourceGroup.WithParentRelationship(foundry);
 
 #pragma warning disable ASPIRECOSMOSDB001
 var cosmos = builder.AddAzureCosmosDB("cosmos-db")
