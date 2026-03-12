@@ -1,21 +1,21 @@
-﻿#:sdk Aspire.AppHost.Sdk@13.3.0-pr.14149.gd67070ad
-#:package Aspire.Hosting.Azure.AIFoundry@13.3.0-pr.14149.gd67070ad
-#:package Aspire.Hosting.Azure.CosmosDB@13.3.0-pr.14149.gd67070ad
-#:package Aspire.Hosting.Python@13.3.0-pr.14149.gd67070ad
-#:package Aspire.Hosting.JavaScript@13.3.0-pr.14149.gd67070ad
+﻿#:sdk Aspire.AppHost.Sdk@13.2.0-pr.14149.g805bf3d2
+#:package Aspire.Hosting.Foundry@13.2.0-pr.14149.g805bf3d2
+#:package Aspire.Hosting.Azure.CosmosDB@13.2.0-pr.14149.g805bf3d2
+#:package Aspire.Hosting.Python@13.2.0-pr.14149.g805bf3d2
+#:package Aspire.Hosting.JavaScript@13.2.0-pr.14149.g805bf3d2
 
 #:project ./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj
 #:project ./lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj
 
-using Aspire.Hosting.Azure;
+using Aspire.Hosting.Foundry;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
 var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
 
-var foundry = builder.AddAzureAIFoundry("foundry-ski-resort");
+var foundry = builder.AddFoundry("foundry-ski-resort");
 var project = foundry.AddProject("project-ski-resort");
-var deployment = foundry.AddDeployment("gpt41", AIFoundryModel.OpenAI.Gpt41)
+var deployment = foundry.AddDeployment("gpt41", FoundryModel.OpenAI.Gpt41)
     .WithProperties(configure => configure.SkuCapacity = 150 );
 
 tenantId.WithParentRelationship(foundry);
