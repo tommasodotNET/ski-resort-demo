@@ -14,7 +14,7 @@ public class LiftDataService
         _logger = logger;
         
         // Get data-generator URL from Aspire service discovery
-        _dataGeneratorUrl = Environment.GetEnvironmentVariable("services__data-generator__http__0")
+        _dataGeneratorUrl = Environment.GetEnvironmentVariable("services__data-generator__https__0")
             ?? throw new InvalidOperationException("services__data-generator__http__0 not found in environment variables");
         
         _logger.LogInformation("LiftDataService initialized with data-generator URL: {Url}", _dataGeneratorUrl);

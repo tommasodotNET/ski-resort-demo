@@ -47,13 +47,13 @@ AIAgent ResolveA2AAgent(string envVar, string? cardPath = "/.well-known/agent-ca
 }
 
 // Connect to specialist agents via A2A
-var weatherAgent = ResolveA2AAgent("services__weather-agent-python__http__0");
+var weatherAgent = ResolveA2AAgent("services__weather-agent-python__https__0");
 var liftAgent = ResolveA2AAgent(Environment.GetEnvironmentVariable("services__lift-traffic-agent-dotnet__https__0") != null
         ? "services__lift-traffic-agent-dotnet__https__0"
         : "services__lift-traffic-agent-dotnet__http__0",
     "/agenta2a/v1/card");
-var safetyAgent = ResolveA2AAgent("services__safety-agent-python__http__0");
-var coachAgent = ResolveA2AAgent("services__ski-coach-agent-python__http__0");
+var safetyAgent = ResolveA2AAgent("services__safety-agent-python__https__0");
+var coachAgent = ResolveA2AAgent("services__ski-coach-agent-python__https__0");
 
 // Register the orchestrator agent that uses all 4 remote agents as tools
 builder.AddAIAgent("advisor-agent", (sp, key) =>

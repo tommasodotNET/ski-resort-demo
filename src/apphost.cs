@@ -91,6 +91,11 @@ var advisorAgent = builder.AddProject<Projects.AdvisorAgent_Dotnet>("advisor-age
 // ---------------------------------------------------------------------------
 builder.AddViteApp("frontend", "./frontend", "dev")
     .WithReference(advisorAgent).WaitFor(advisorAgent)
-    .WithReference(dataGenerator).WaitFor(dataGenerator);
+    .WithReference(dataGenerator).WaitFor(dataGenerator)
+    .WithUrls((e) =>
+    {
+        e.Urls.Clear();
+        e.Urls.Add(new() { Url = "/", DisplayText = "⛷️ Ski Resort Dashboard", Endpoint = e.GetEndpoint("http") });
+    });
 
 builder.Build().Run();
