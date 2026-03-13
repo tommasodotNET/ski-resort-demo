@@ -16,10 +16,10 @@ class SafetyService:
 
     def __init__(self):
         """Initialize the safety service with data-generator endpoint."""
-        self.data_generator_url = os.getenv("services__data-generator__http__0")
+        self.data_generator_url = os.getenv("services__data-generator__https__0")
         if not self.data_generator_url:
-            logger.warning("services__data-generator__http__0 not set, using default")
-            self.data_generator_url = "http://localhost:8080"
+            logger.warning("services__data-generator__https__0 not set, using default")
+            self.data_generator_url = "https://localhost:8080"
         
         logger.info(f"SafetyService initialized with data-generator at: {self.data_generator_url}")
 

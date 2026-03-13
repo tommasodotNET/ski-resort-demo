@@ -15,10 +15,10 @@ class WeatherService:
     
     def __init__(self):
         """Initialize the weather service."""
-        self.data_generator_url = os.environ.get("services__data-generator__http__0")
+        self.data_generator_url = os.environ.get("services__data-generator__https__0")
         if not self.data_generator_url:
-            logger.warning("services__data-generator__http__0 environment variable not set")
-            self.data_generator_url = "http://localhost:8080"  # Fallback
+            logger.warning("services__data-generator__https__0 environment variable not set")
+            self.data_generator_url = "https://localhost:8080"  # Fallback
         
         logger.info(f"WeatherService initialized with data-generator URL: {self.data_generator_url}")
     

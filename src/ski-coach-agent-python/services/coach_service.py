@@ -82,7 +82,7 @@ class CoachService:
     
     def __init__(self):
         """Initialize the coach service."""
-        self.data_generator_url = os.environ.get("services__data-generator__http__0", "http://localhost:8080")
+        self.data_generator_url = os.environ.get("services__data-generator__https__0", "https://localhost:8080")
         logger.info(f"CoachService initialized with data generator at: {self.data_generator_url}")
     
     async def _fetch_current_state(self) -> Dict[str, Any]:

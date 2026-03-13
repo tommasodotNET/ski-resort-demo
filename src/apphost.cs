@@ -1,8 +1,8 @@
-﻿#:sdk Aspire.AppHost.Sdk@13.2.0-pr.14149.g805bf3d2
-#:package Aspire.Hosting.Foundry@13.2.0-pr.14149.g805bf3d2
-#:package Aspire.Hosting.Azure.CosmosDB@13.2.0-pr.14149.g805bf3d2
-#:package Aspire.Hosting.Python@13.2.0-pr.14149.g805bf3d2
-#:package Aspire.Hosting.JavaScript@13.2.0-pr.14149.g805bf3d2
+﻿#:sdk Aspire.AppHost.Sdk@13.2.0-preview.1.26162.21
+#:package Aspire.Hosting.Foundry@13.2.0-preview.1.26162.21
+#:package Aspire.Hosting.Azure.CosmosDB@13.2.0-preview.1.26162.21
+#:package Aspire.Hosting.Python@13.2.0-preview.1.26162.21
+#:package Aspire.Hosting.JavaScript@13.2.0-preview.1.26162.21
 
 #:project ./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj
 #:project ./lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj
@@ -12,13 +12,18 @@ using Aspire.Hosting.Foundry;
 var builder = DistributedApplication.CreateBuilder(args);
 
 var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
+var existingFoundryName = builder.AddParameter("existingFoundryName")
+    .WithDescription("The name of the existing Azure Foundry resource.");
+var existingFoundryResourceGroup = builder.AddParameter("existingFoundryResourceGroup")
+    .WithDescription("The resource group of the existing Azure Foundry resource.");
 
-var foundry = builder.AddFoundry("foundry-ski-resort");
-var project = foundry.AddProject("project-ski-resort");
-var deployment = foundry.AddDeployment("gpt41", FoundryModel.OpenAI.Gpt41)
-    .WithProperties(configure => configure.SkuCapacity = 150 );
+var foundry = builder.AddFoundry("foundry").AsExisting(existingFoundryName, existingFoundryResourceGroup);
+var deployment = foundry.AddDeployment("gpt41", FoundryModel.OpenAI.Gpt41).WithProperties(configure => configure.SkuCapacity = 150);
+// var project = builder.AddFoundryProject("project-ski-resort");
+// var deployment = project.AddModelDeployment("gpt41", FoundryModel.OpenAI.Gpt41)
+//     .WithProperties(configure => configure.SkuCapacity = 150 );
 
-tenantId.WithParentRelationship(foundry);
+// tenantId.WithParentRelationship(foundry);
 
 #pragma warning disable ASPIRECOSMOSDB001
 var cosmos = builder.AddAzureCosmosDB("cosmos-db")

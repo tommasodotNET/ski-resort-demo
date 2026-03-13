@@ -212,10 +212,10 @@ def main():
     port = int(os.environ.get("PORT", 8080))
     host = os.environ.get("HOST", "0.0.0.0")
     
-    logger.info(f"Starting AlpineAI Data Generator on http://{host}:{port}")
-    logger.info(f"API endpoints available at http://{host}:{port}/api/")
-    logger.info(f"Health check: http://{host}:{port}/health")
-    logger.info(f"API docs: http://{host}:{port}/docs")
+    logger.info(f"Starting AlpineAI Data Generator on https://{host}:{port}")
+    logger.info(f"API endpoints available at https://{host}:{port}/api/")
+    logger.info(f"Health check: https://{host}:{port}/health")
+    logger.info(f"API docs: https://{host}:{port}/docs")
     
     uvicorn.run(
         app,
