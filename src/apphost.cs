@@ -12,18 +12,11 @@ using Aspire.Hosting.Foundry;
 var builder = DistributedApplication.CreateBuilder(args);
 
 var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
-// var existingFoundryName = builder.AddParameter("existingFoundryName")
-//     .WithDescription("The name of the existing Azure Foundry resource.");
-// var existingFoundryResourceGroup = builder.AddParameter("existingFoundryResourceGroup")
-//     .WithDescription("The resource group of the existing Azure Foundry resource.");
 
 var foundry = builder.AddFoundry("aif-ski-resort-demo");
-// var deployment = foundry.AddDeployment("gpt41", FoundryModel.OpenAI.Gpt41).WithProperties(configure => configure.SkuCapacity = 150);
 var project = foundry.AddProject("proj-ski-resort-demo");
 var deployment = project.AddModelDeployment("gpt41", FoundryModel.OpenAI.Gpt41)
     .WithProperties(configure => configure.SkuCapacity = 150 );
-
-// tenantId.WithParentRelationship(foundry);
 
 #pragma warning disable ASPIRECOSMOSDB001
 var cosmos = builder.AddAzureCosmosDB("cosmos-db")
