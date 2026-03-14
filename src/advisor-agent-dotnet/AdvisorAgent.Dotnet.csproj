@@ -11,8 +11,8 @@
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.0.0-preview.260212.1" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.0.0-preview.260212.1" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260212.1" />
-    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.2.0-preview.1.26162.21" />
-    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.2.0-preview.1.26162.21" />
+    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.2.0-pr.15228.g1e98fa54" />
+    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.2.0-pr.15228.g1e98fa54" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\service-defaults\service-defaults.csproj" />
