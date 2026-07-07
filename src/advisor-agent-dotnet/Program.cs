@@ -1,13 +1,13 @@
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 using Azure.AI.Projects;
-using Azure.AI.AgentServer.Responses;
+using Azure.Core;
 using Azure.Identity;
 using System.Data.Common;
 using A2A;
 using Azure.AI.Extensions.OpenAI;
-using CreateResponse = Azure.AI.AgentServer.Responses.Models.CreateResponse;
 
 #pragma warning disable OPENAI001
 
@@ -15,23 +15,23 @@ const string AgentResponseIdHeader = "x-agent-response-id";
 
 string port = Environment.GetEnvironmentVariable("DEFAULT_AD_PORT") ?? "8088";
 
-var projectConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__projvoiceskiresort")
-    ?? throw new InvalidOperationException("ConnectionStrings__projvoiceskiresort is not set.");
-var chatConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__gpt41")
-    ?? throw new InvalidOperationException("ConnectionStrings__gpt41 is not set.");
-
-DbConnectionStringBuilder projectConnectionBuilder = new() { ConnectionString = projectConnectionString };
-DbConnectionStringBuilder chatConnectionBuilder = new() { ConnectionString = chatConnectionString };
-
-var projectEndpoint = GetRequiredConnectionValue(projectConnectionBuilder, "Endpoint");
-var deploymentName = GetRequiredConnectionValue(chatConnectionBuilder, "Deployment");
+var projectEndpoint = GetFoundryProjectEndpoint();
+var deploymentName = GetModelDeploymentName();
 
 if (!Uri.TryCreate(projectEndpoint, UriKind.Absolute, out var projectUri) || projectUri is null)
 {
-    throw new InvalidOperationException("ConnectionStrings__projvoiceskiresort contains an invalid Endpoint value.");
+    throw new InvalidOperationException("The configured Foundry project endpoint is invalid.");
 }
 
-var credential = new DefaultAzureCredential();
+TokenCredential credential = new ChainedTokenCredential(
+    new DevTemporaryTokenCredential(),
+    new DefaultAzureCredential(new DefaultAzureCredentialOptions
+    {
+        ExcludeManagedIdentityCredential = string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development",
+            StringComparison.OrdinalIgnoreCase)
+    }));
 
 // Helper to resolve a remote agent via A2A
 AIAgent ResolveA2AAgent(string envVar, string cardPath = "/.well-known/agent-card.json", string? endpointPath = null)
@@ -69,21 +69,19 @@ var coachAgent = ResolveA2AAgent(Environment.GetEnvironmentVariable("services__s
 var foundryProjectClient = new AIProjectClient(projectUri, credential);
 
 // var skiResearcherAgent = await foundryProjectClient.AgentAdministrationClient.GetAgentAsync("ski-researcher");
-var skiResearcherAgentReference = new AgentReference(name: Environment.GetEnvironmentVariable("SKIRESEARCHER_AGENTNAME"));
+var skiResearcherAgentName = Environment.GetEnvironmentVariable("SKIRESEARCHER_AGENTNAME")
+    ?? throw new InvalidOperationException("SKIRESEARCHER_AGENTNAME is not set.");
+var skiResearcherAgentReference = new AgentReference(name: skiResearcherAgentName);
 var responseClient = foundryProjectClient.ProjectOpenAIClient.GetProjectResponsesClientForAgent(skiResearcherAgentReference);
-var skiResearcherAgent = responseClient.AsIChatClient("gpt41").AsAIAgent(Environment.GetEnvironmentVariable("SKIRESEARCHER_AGENTNAME"), description: "I can search the web. Use me for any generic question about skiing.");
+var skiResearcherAgent = responseClient
+    .AsIChatClient(deploymentName)
+    .AsAIAgent(skiResearcherAgentName, description: "I can search the web. Use me for any generic question about skiing.");
 
-var agent = new AIProjectClient(new Uri(projectEndpoint), new DefaultAzureCredential())
-    .GetProjectOpenAIClient()
-    .GetProjectResponsesClient()
-    .AsIChatClient(deploymentName) // Converts into a Microsoft.Extensions.AI.IChatClient
-    .AsBuilder()
-    .ConfigureOptions(options => options.AllowMultipleToolCalls = true)
-    .UseOpenTelemetry(sourceName: "Foundry.Agents", configure: (cfg) => cfg.EnableSensitiveData = true)    // Enable OpenTelemetry instrumentation with sensitive data
-    .Build()
-    .AsAIAgent(
-        name: "advisor-agent",
-        instructions: @"You are the Ski Resort Advisor, the main AI concierge for AlpineAI ski resort.
+var agent = foundryProjectClient.AsAIAgent(
+    model: deploymentName,
+    name: Environment.GetEnvironmentVariable("AGENT_NAME") ?? "advisor-agent",
+    description: "AlpineAI ski resort advisor orchestrator with local specialist-agent tools.",
+    instructions: @"You are the Ski Resort Advisor, the main AI concierge for AlpineAI ski resort.
 
 You have access to four specialist agents as tools:
 - Weather Agent: current conditions, forecasts, storm alerts
@@ -105,19 +103,28 @@ Examples:
 - ""Hi"" or ""Thanks"" → respond directly, no agent calls needed
 
 When you DO call agents, synthesize their responses into one clear answer. Mention any safety concerns prominently. Be friendly, concise, and helpful.",
-        tools: [
-            weatherAgent.AsAIFunction(),
-            liftAgent.AsAIFunction(),
-            safetyAgent.AsAIFunction(),
-            coachAgent.AsAIFunction(),
-            skiResearcherAgent.AsAIFunction()
-        ]);
+    tools: [
+        weatherAgent.AsAIFunction(),
+        liftAgent.AsAIFunction(),
+        safetyAgent.AsAIFunction(),
+        coachAgent.AsAIFunction(),
+        skiResearcherAgent.AsAIFunction()
+    ],
+    clientFactory: chatClient => chatClient
+        .AsBuilder()
+        .ConfigureOptions(options => options.AllowMultipleToolCalls = true)
+        .UseOpenTelemetry(sourceName: "Foundry.Agents", configure: cfg => cfg.EnableSensitiveData = true)
+        .Build());
 
 var ficc = agent.GetService<FunctionInvokingChatClient>();
 ficc?.AllowConcurrentInvocation = true;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls($"http://+:{port}");
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
+    && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("URLS")))
+{
+    builder.WebHost.UseUrls($"http://+:{port}");
+}
 
 builder.AddServiceDefaults();
 
@@ -132,10 +139,10 @@ builder.Services.AddCors(options =>
     });
 });
 
-builder.Services.AddFoundryResponses(agent, new FileSystemAgentSessionStore(GetCheckpointDirectory()));
+builder.Services.AddFoundryResponses(agent);
 if (builder.Environment.IsDevelopment())
 {
-    builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevelopmentHostedSessionIsolationKeyProvider>();
+    builder.Services.AddDevTemporaryLocalContributorSetup();
 }
 
 var app = builder.Build();
@@ -148,11 +155,42 @@ app.Use(UseSdkGeneratedResponseIdsForResponses);
 
 // Map Foundry Responses API endpoint at /responses.
 app.MapFoundryResponses();
+app.MapDevTemporaryLocalAgentEndpoint();
 app.MapGet("/liveness", () => Results.Ok("Healthy"));
 app.MapGet("/readiness", () => Results.Ok("Ready"));
 
 // app.MapDefaultEndpoints();
 app.Run();
+
+static string GetFoundryProjectEndpoint()
+{
+    var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+    if (!string.IsNullOrWhiteSpace(endpoint))
+    {
+        return endpoint;
+    }
+
+    var projectConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__projvoiceskiresort")
+        ?? throw new InvalidOperationException("Set FOUNDRY_PROJECT_ENDPOINT or ConnectionStrings__projvoiceskiresort.");
+
+    DbConnectionStringBuilder projectConnectionBuilder = new() { ConnectionString = projectConnectionString };
+    return GetRequiredConnectionValue(projectConnectionBuilder, "Endpoint");
+}
+
+static string GetModelDeploymentName()
+{
+    var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL");
+    if (!string.IsNullOrWhiteSpace(model))
+    {
+        return model;
+    }
+
+    var chatConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__gpt41")
+        ?? throw new InvalidOperationException("Set FOUNDRY_MODEL or ConnectionStrings__gpt41.");
+
+    DbConnectionStringBuilder chatConnectionBuilder = new() { ConnectionString = chatConnectionString };
+    return GetRequiredConnectionValue(chatConnectionBuilder, "Deployment");
+}
 
 static string GetRequiredConnectionValue(DbConnectionStringBuilder connectionBuilder, string key)
 {
@@ -170,19 +208,10 @@ static string GetRequiredConnectionValue(DbConnectionStringBuilder connectionBui
     return value;
 }
 
-static string GetCheckpointDirectory()
-{
-    var homeDirectory = Environment.GetEnvironmentVariable("HOME");
-
-    return string.IsNullOrWhiteSpace(homeDirectory)
-        ? Path.Combine(Directory.GetCurrentDirectory(), FileSystemAgentSessionStore.LocalCheckpointDirectoryName)
-        : Path.Combine(homeDirectory, FileSystemAgentSessionStore.LocalCheckpointDirectoryName);
-}
-
 static async Task UseSdkGeneratedResponseIdsForResponses(HttpContext context, Func<Task> next)
 {
     if (HttpMethods.IsPost(context.Request.Method)
-        && string.Equals(context.Request.Path.Value, "/responses", StringComparison.OrdinalIgnoreCase)
+        && IsFoundryResponsesPath(context.Request.Path.Value)
         && context.Request.Headers.ContainsKey(AgentResponseIdHeader))
     {
         context.Request.Headers.Remove(AgentResponseIdHeader);
@@ -191,36 +220,28 @@ static async Task UseSdkGeneratedResponseIdsForResponses(HttpContext context, Fu
     await next();
 }
 
-sealed class LocalDevelopmentHostedSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+static bool IsFoundryResponsesPath(string? path)
+    => string.Equals(path, "/responses", StringComparison.OrdinalIgnoreCase)
+       || (path?.EndsWith("/endpoint/protocols/openai/responses", StringComparison.OrdinalIgnoreCase) ?? false);
+
+sealed class DevTemporaryTokenCredential : TokenCredential
 {
-    private const string UserIsolationKeyEnvironmentVariable = "HOSTED_USER_ISOLATION_KEY";
-    private const string ChatIsolationKeyEnvironmentVariable = "HOSTED_CHAT_ISOLATION_KEY";
-    private const string DefaultLocalUserIsolationKey = "local-dev-user";
-    private const string DefaultLocalChatIsolationKey = "local-dev-chat";
+    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
+    private readonly string? token = Environment.GetEnvironmentVariable(EnvironmentVariable);
 
-    public override ValueTask<HostedSessionContext?> GetKeysAsync(
-        ResponseContext context,
-        CreateResponse request,
-        CancellationToken cancellationToken)
+    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => GetAccessToken();
+
+    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => new(GetAccessToken());
+
+    private AccessToken GetAccessToken()
     {
-        var userId = !string.IsNullOrWhiteSpace(context.Isolation?.UserIsolationKey)
-            ? context.Isolation.UserIsolationKey
-            : Environment.GetEnvironmentVariable(UserIsolationKeyEnvironmentVariable);
-
-        if (string.IsNullOrWhiteSpace(userId))
+        if (string.IsNullOrWhiteSpace(token) || string.Equals(token, nameof(DefaultAzureCredential), StringComparison.Ordinal))
         {
-            userId = DefaultLocalUserIsolationKey;
+            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
         }
 
-        var chatId = !string.IsNullOrWhiteSpace(context.Isolation?.ChatIsolationKey)
-            ? context.Isolation.ChatIsolationKey
-            : Environment.GetEnvironmentVariable(ChatIsolationKeyEnvironmentVariable);
-
-        if (string.IsNullOrWhiteSpace(chatId))
-        {
-            chatId = DefaultLocalChatIsolationKey;
-        }
-
-        return ValueTask.FromResult<HostedSessionContext?>(new HostedSessionContext(userId, chatId));
+        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
     }
 }

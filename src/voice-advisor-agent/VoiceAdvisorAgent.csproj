@@ -8,21 +8,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.4.0-preview.1.26279.43" />
-    <PackageReference Include="Azure.AI.Extensions.OpenAI" Version="2.1.0-beta.2" />
-    <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.2" />
-    <PackageReference Include="Azure.AI.Projects.Agents" Version="2.1.0-beta.2" />
-    <PackageReference Include="Azure.AI.VoiceLive" Version="1.0.0" />
-    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.4.0" />
-    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.6.2-preview.260521.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.6.2-preview.260521.1" />
-    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.59.0" />
+    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.4.6-preview.1.26319.6" />
+    <PackageReference Include="Azure.AI.Extensions.OpenAI" Version="2.1.0-beta.4" />
+    <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.4" />
+    <PackageReference Include="Azure.AI.Projects.Agents" Version="2.1.0-beta.4" />
+    <PackageReference Include="Azure.AI.VoiceLive" Version="1.2.0-beta.1" />
+    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.4.6" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.13.0-preview.260703.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.13.0-preview.260703.1" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.0-preview.0" />
 
     <!-- Microsoft Agent Framework (MAF) for A2A agent invocation -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.6.2" />
-    <PackageReference Include="Microsoft.Agents.AI.A2A" Version="1.6.2-preview.260521.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.6.2-preview.260521.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.6.2-preview.260521.1" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.13.0" />
+    <PackageReference Include="Microsoft.Agents.AI.A2A" Version="1.13.0-preview.260703.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.13.0-preview.260703.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.13.0-preview.260703.1" />
   </ItemGroup>
 
   <ItemGroup>

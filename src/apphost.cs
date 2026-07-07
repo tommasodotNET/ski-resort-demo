@@ -1,9 +1,9 @@
-#:sdk Aspire.AppHost.Sdk@13.4.2
-#:package Aspire.Hosting.Azure.AppContainers@13.4.2
-#:package Aspire.Hosting.Foundry@13.4.2-preview.1.26303.6
-#:package Aspire.Hosting.Azure.CosmosDB@13.4.2
-#:package Aspire.Hosting.Python@13.4.2
-#:package Aspire.Hosting.JavaScript@13.4.2
+#:sdk Aspire.AppHost.Sdk@13.4.6
+#:package Aspire.Hosting.Azure.AppContainers@13.4.6
+#:package Aspire.Hosting.Foundry@13.4.6-preview.1.26319.6
+#:package Aspire.Hosting.Azure.CosmosDB@13.4.6
+#:package Aspire.Hosting.Python@13.4.6
+#:package Aspire.Hosting.JavaScript@13.4.6
 #:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
 
 #:project ./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj
@@ -12,6 +12,7 @@
 #:project ./voice-advisor-agent/VoiceAdvisorAgent.csproj
 
 using Aspire.Hosting.Foundry;
+using Azure.AI.Projects.Agents;
 
 var builder = DistributedApplication.CreateBuilder(args);
 const string A2AAgentBaseUrlEnvironmentVariable = "A2A_AGENT_BASE_URL";
@@ -109,7 +110,7 @@ var advisorAgent = builder.AddProject<Projects.AdvisorAgent_Dotnet>("advisoragen
     .WithReference(safetyAgent).WaitFor(safetyAgent)
     .WithReference(coachAgent).WaitFor(coachAgent)
     .WithReference(skiResearcher).WaitFor(skiResearcher)
-    .AsHostedAgent(project);
+    .AsHostedAgent(project, configure => configure.ContainerProtocolVersions.Add(new ProtocolVersionRecord("responses", "2.0.0")));
 
 // ---------------------------------------------------------------------------
 // Voice Advisor Agent (.NET) — Voice orchestrator via WebSocket + Voice Live
