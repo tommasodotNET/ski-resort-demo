@@ -11,6 +11,8 @@
 #:project ./responses-gateway/ResponsesGateway.csproj
 #:project ./voice-advisor-agent/VoiceAdvisorAgent.csproj
 
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Foundry;
 
 var builder = DistributedApplication.CreateBuilder(args);
@@ -92,7 +94,7 @@ coachAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, coachAgent.GetEnd
 // ---------------------------------------------------------------------------
 // Lift Traffic Agent (.NET)
 // ---------------------------------------------------------------------------
-var liftAgent = builder.AddProject<Projects.LiftTrafficAgent_Dotnet>("lifttrafficagent")
+var liftAgent = builder.AddProject("lifttrafficagent", "./lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj")
     .WithExternalHttpEndpoints()
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -102,7 +104,7 @@ liftAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, liftAgent.GetEndpo
 // ---------------------------------------------------------------------------
 // Advisor Agent (.NET) — Orchestrator
 // ---------------------------------------------------------------------------
-var advisorAgent = builder.AddProject<Projects.AdvisorAgent_Dotnet>("advisoragent")
+var advisorAgent = builder.AddProject("advisoragent", "./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj")
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(weatherAgent).WaitFor(weatherAgent)
     .WithReference(liftAgent).WaitFor(liftAgent)
@@ -114,7 +116,7 @@ var advisorAgent = builder.AddProject<Projects.AdvisorAgent_Dotnet>("advisoragen
 // ---------------------------------------------------------------------------
 // Voice Advisor Agent (.NET) — Voice orchestrator via WebSocket + Voice Live
 // ---------------------------------------------------------------------------
-var voiceAdvisorAgent = builder.AddProject<Projects.VoiceAdvisorAgent>("voiceadvisoragent")
+var voiceAdvisorAgent = builder.AddProject("voiceadvisoragent", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
     .WithReference(project).WaitFor(project)
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(voiceDeployment).WaitFor(voiceDeployment)
@@ -142,7 +144,7 @@ var frontend = builder.AddViteApp("frontend", "./frontend", "dev")
 
 if (builder.ExecutionContext.IsPublishMode)
 {
-    builder.AddProject<Projects.ResponsesGateway>("frontendgateway")
+    builder.AddProject("frontendgateway", "./responses-gateway/ResponsesGateway.csproj")
         .WithHttpEndpoint(env: "PORT")
         .WithExternalHttpEndpoints()
         .WithReference(advisorAgent).WaitFor(advisorAgent)
