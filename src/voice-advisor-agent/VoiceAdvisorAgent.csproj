@@ -8,12 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.4.6-preview.1.26319.6" />
+    <PackageReference Include="Aspire.Azure.AI.Inference" Version="13.5.3-preview.1.26425.3" />
     <PackageReference Include="Azure.AI.Extensions.OpenAI" Version="2.1.0-beta.4" />
     <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.4" />
     <PackageReference Include="Azure.AI.Projects.Agents" Version="2.1.0-beta.4" />
     <PackageReference Include="Azure.AI.VoiceLive" Version="1.2.0-beta.1" />
-    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.4.6" />
+    <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.5.3" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.13.0-preview.260703.1" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.13.0-preview.260703.1" />
     <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.0-preview.0" />
