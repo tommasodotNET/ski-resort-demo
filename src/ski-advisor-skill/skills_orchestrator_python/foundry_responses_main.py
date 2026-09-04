@@ -12,8 +12,9 @@ when configured -- instead of the sample's local-function tools.
 
 Run locally with ``uv run start-responses`` from this project's directory
 (reads the same env vars as `main.py`/`cli.py` -- see README.md's
-"Configuration" section -- plus `SKILLS_ADVISOR_PORT`/`HOST` for the Responses listener,
-defaulting to 8088/0.0.0.0 to match the reference sample and
+"Configuration" section -- plus `DEFAULT_AD_PORT`/`PORT`/`HOST` for the
+Responses listener, with port precedence in that order and a final default of
+8088/0.0.0.0 to match the reference sample and
 `azure-ai-agentserver-core`'s own default). See README.md's "AppHost wiring"
 section for how an Aspire resource can wrap this with
 ``.AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0")`` -- this
@@ -87,7 +88,9 @@ async def _run() -> None:
         server = ResponsesHostServer(built.agent, history_source=history_source)
 
         host = os.environ.get("HOST", "0.0.0.0")
-        port = int(os.environ.get("SKILLS_ADVISOR_PORT", os.environ.get("PORT", 8088)))
+        port = int(
+            os.environ.get("DEFAULT_AD_PORT") or os.environ.get("PORT") or "8088"
+        )
         await server.run_async(host=host, port=port)
 
 

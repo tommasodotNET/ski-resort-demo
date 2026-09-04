@@ -120,7 +120,8 @@ Foundry model (same convention as the sibling specialist agents):
 | --- | --- | --- |
 | `GPT41_URI` | *(required)* | Foundry project endpoint, normally injected by Aspire via `.WithReference(deployment)` on an `AddModelDeployment("gpt41", ...)` resource. |
 | `GPT41_MODEL` | `gpt41` | Model deployment name. |
-| `PORT` | `8084` (A2A) / `8088` (Responses) | Port the A2A server (`start`, `main.py`) or Foundry Responses host (`start-responses`, `foundry_responses_main.py`) listens on — same env var, different process/default depending on which entry point reads it. |
+| `DEFAULT_AD_PORT` | `PORT`, then `8088` | Preferred port for the Foundry Responses host (`start-responses`, `foundry_responses_main.py`), injected by Aspire hosted-agent wiring. |
+| `PORT` | `8084` (A2A) / `8088` (Responses fallback) | Port the A2A server (`start`, `main.py`) listens on; the Responses host reads it only when `DEFAULT_AD_PORT` is unset. |
 | `HOST` | `0.0.0.0` | Only read by `start-responses`; the A2A server's host binding is fixed in `main.py`. |
 | `A2A_AGENT_BASE_URL` | `http://localhost:<PORT>` | Base URL advertised in this agent's own `AgentCard`. Only used by the A2A surface. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | Enables OpenTelemetry span export when set. |
@@ -153,7 +154,7 @@ var names exactly:
 uv sync
 uv run start             # start the A2A server (FastAPI + uvicorn) on $PORT (default 8084)
 uv run cli                # interactive CLI, mirrors the reference sample's chat loop
-uv run start-responses  # start the Foundry hosted Responses agent on $PORT (default 8088)
+uv run start-responses  # Responses host: $DEFAULT_AD_PORT, then $PORT, then 8088
 ```
 
 `GET /health` reports `agent_ready`, `connected_skill_providers`,
@@ -185,9 +186,8 @@ the MCP-connection/skills-discovery/researcher-tool/Cosmos-history wiring.
   `pyproject.toml` because the `history_source` parameter used below did not
   exist in earlier prereleases). Internally this wraps
   `azure.ai.agentserver.responses`'s ASGI app and serves it with `hypercorn`.
-- Listens on `PORT` (default **8088**, matching this package's own default and
-  Aspire's `AsHostedAgent` run-mode `DEFAULT_AD_PORT` default target port — see
-  "AppHost wiring" below) and `HOST` (default `0.0.0.0`).
+- Listens on `DEFAULT_AD_PORT`, then `PORT`, then **8088** (matching Aspire's
+  hosted-agent port convention), and `HOST` (default `0.0.0.0`).
 - Exposes **only** the Responses protocol routes (`POST /responses`,
   `GET/POST /responses/{id}`, `POST /responses/{id}/cancel`, `GET
   /responses/{id}/input_items`) — no A2A routes, no `/health`. This mirrors
@@ -195,17 +195,11 @@ the MCP-connection/skills-discovery/researcher-tool/Cosmos-history wiring.
   `MapFoundryResponses()` instead of A2A routes once wrapped in
   `.AsHostedAgent(...)`.
 - **History source selection** (`history_source` on `ResponsesHostServer`):
-  - If Cosmos DB is configured (`AZURE_COSMOS_ENDPOINT` set — see
-    Configuration above), `agent_builder` attaches the same
-    `CosmosHistoryProvider` the A2A surface uses. `ResponsesHostServer` is then
-    constructed with `history_source="agent"`, so conversation durability is
-    delegated entirely to that Cosmos-backed context provider — identical
-    behavior/backing store to the A2A surface, just reached over the Responses
-    protocol instead.
-  - If Cosmos is **not** configured, there is no history-loading context
-    provider on the agent, so the default `history_source="agent_server"` is
-    used instead: Foundry's own Agent Server session store durably owns
-    conversation history for this hosted agent. This is actually a *better*
+  - The AppHost intentionally does not give the Foundry-hosted resource a
+    `skillHistory` reference. With no Cosmos provider configured,
+    `history_source="agent_server"` lets Foundry's own Agent Server session
+    store durably own conversation history for this hosted agent. This is a
+    *better*
     fallback than the A2A surface gets in the same unconfigured case (which
     only keeps history for the lifetime of a single in-memory `AgentSession`),
     though it's only meaningful once actually deployed as a Foundry hosted
@@ -227,13 +221,12 @@ the MCP-connection/skills-discovery/researcher-tool/Cosmos-history wiring.
   `shutdown_handler` for exiting it — this project's own exit stack must not
   pre-enter that context or double-manage its teardown.
 - A `Dockerfile` (and `.dockerignore`) exist at this project's root purely so
-  Aspire's `AsHostedAgent` **publish**-mode wiring can containerize this
-  resource — for any `ExecutableResource` (which is what `AddUvApp` produces),
-  `AsHostedAgent` calls `PublishAsDockerFile()` internally, which requires a
-  `Dockerfile` at the resource's working directory. It has no effect on local
-  `aspire run`/dev-loop execution (which still runs `uv run start-responses`
-  directly via `AddUvApp`), and does not apply to the A2A surface, which has
-  no Dockerfile requirement.
+  Aspire's **publish**-mode wiring can containerize both Python resources that
+  share this working directory. Its entrypoint keeps `uv run --no-sync
+  start-responses` as the default while recognizing the command-only
+  `skills_orchestrator_python.main:app --host ...` arguments generated for
+  `skiadvisorskilla2a` and dispatching them through Uvicorn. It has no effect
+  on local `aspire run`/dev-loop execution.
 
 ## AppHost wiring
 
@@ -303,11 +296,9 @@ var skillsAdvisor = builder.AddPythonExecutable(
     .WithReference(coachSkill).WaitFor(coachSkill)
     .WithReference(liftSkill).WaitFor(liftSkill)
     .WithReference(skiResearcher).WaitFor(skiResearcher)
-    .WithReference(skillHistory).WaitFor(skillHistory)
     .WithComputeEnvironment(aca)
-    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0")
-    .WithEndpoint("http", endpoint => endpoint.TargetPort = 8089)
-    .WithEnvironment("SKILLS_ADVISOR_PORT", "8089");
+    .WithHttpEndpoint(targetPort: 8089)
+    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0");
 ```
 
 - **Publish mode**: for the `ExecutableResource` created by

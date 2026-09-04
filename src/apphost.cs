@@ -111,21 +111,25 @@ liftAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, liftAgent.GetEndpo
 // ---------------------------------------------------------------------------
 var weatherSkill = builder.AddProject("weatherskills", "./weather-skills/WeatherSkill.Dotnet.csproj")
     .WithHttpEndpoint()
+    .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
 var safetySkill = builder.AddProject("safetyskills", "./safety-skills/SafetySkill.Dotnet.csproj")
     .WithHttpEndpoint()
+    .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
 var coachSkill = builder.AddProject("skicoachskills", "./ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
     .WithHttpEndpoint()
+    .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
 var liftSkill = builder.AddProject("lifttrafficskills", "./lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
     .WithHttpEndpoint()
+    .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
@@ -163,11 +167,9 @@ var skillsAdvisor = builder.AddPythonExecutable(
     .WithReference(coachSkill).WaitFor(coachSkill)
     .WithReference(liftSkill).WaitFor(liftSkill)
     .WithReference(skiResearcher).WaitFor(skiResearcher)
-    .WithReference(skillHistory).WaitFor(skillHistory)
     .WithComputeEnvironment(aca)
-    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0")
-    .WithEndpoint("http", endpoint => endpoint.TargetPort = 8089)
-    .WithEnvironment("SKILLS_ADVISOR_PORT", "8089");
+    .WithHttpEndpoint(targetPort: 8089)
+    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0");
 
 // ---------------------------------------------------------------------------
 // A2A Orchestrator (.NET)
