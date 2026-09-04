@@ -175,8 +175,8 @@ var deployment = project.AddModelDeployment(
     "gpt41", FoundryModel.OpenAI.gpt41);
 
 var weatherAgent = builder.AddUvicornApp(
-    "weatheragent",
-    "./weatheragent-python",
+    "weatheragenta2a",
+    "./weather-agent-a2a",
     "weather_agent_python.main:app");
               </code></pre>
             </div>
@@ -193,12 +193,12 @@ var weatherAgent = builder.AddUvicornApp(
               </div>
               <pre><code class="language-csharp" data-trim>
 var weatherAgent = builder.AddUvicornApp(
-    "weatheragent",
-    "./weatheragent-python",
+    "weatheragenta2a",
+    "./weather-agent-a2a",
     "weather_agent_python.main:app");
 
 var liftAgent = builder.AddProject&lt;Projects.LiftTrafficAgent_Dotnet&gt;(
-    "lifttrafficagent");
+    "lifttrafficagenta2a");
 
 builder.AddViteApp("frontend", "./frontend", "dev");
               </code></pre>
@@ -245,8 +245,8 @@ var skiResearcher = project
             <h2>Dependencies are explicit</h2>
             <pre class="wide-code"><code class="language-csharp" data-trim>
 var weatherAgent = builder.AddUvicornApp(
-    "weatheragent",
-    "./weatheragent-python",
+    "weatheragenta2a",
+    "./weather-agent-a2a",
     "weather_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
@@ -290,8 +290,8 @@ var voiceAdvisorAgent = builder
 var aca = builder.AddAzureContainerAppEnvironment("aca");
 
 var weatherAgent = builder.AddUvicornApp(
-    "weatheragent",
-    "./weatheragent-python",
+    "weatheragenta2a",
+    "./weather-agent-a2a",
     "weather_agent_python.main:app")
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -375,14 +375,14 @@ client = FoundryChatClient(
     model="gpt41")
 
 self.agent = client.as_agent(
-    name="weatheragent",
+    name="weatheragenta2a",
     instructions="Provide weather, forecast, and storm guidance.",
     tools=[get_current_conditions, get_forecast, is_storm_incoming],
 )
               </code></pre>
               <pre><code class="language-csharp" data-trim>
 var agent = chatClient.AsAIAgent(
-    name: "lifttrafficagent",
+    name: "lifttrafficagenta2a",
     instructions: "Provide lift status, wait times, and congestion analysis.",
     tools: tools.ToArray());
 
@@ -424,7 +424,7 @@ var advisor = chatClient.AsAIAgent(
         // ...
     ]);
             </code></pre>
-            <p class="source">Source: <code>src/advisor-agent-dotnet/Program.cs</code></p>
+            <p class="source">Source: <code>src/ski-advisor-a2a/Program.cs</code></p>
           </section>
 
           <section>
@@ -488,6 +488,114 @@ foreach (var tool in functionTools)
               </code></pre>
             </div>
             <p class="source">Source: <code>src/voice-advisor-agent/Program.cs</code>, <code>VoiceWebSocketHandler.cs</code></p>
+          </section>
+
+          <section class="section-title demo">
+            <p class="eyebrow">Architecture evolution</p>
+            <h2>From agent as a tool to agent as a skill</h2>
+            <p class="subtitle">Keep the specialist boundary and distributed execution—remove the second model hop.</p>
+          </section>
+
+          <section>
+            <h2>Same domain boundary, different runtime</h2>
+            <table class="transport-table">
+              <thead>
+                <tr><th></th><th>Agent as a tool</th><th>Agent as a skill</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Discover</strong></td><td>A2A Agent Card becomes a function</td><td>MCP index advertises a skill description</td></tr>
+                <tr><td><strong>Load context</strong></td><td>Start the specialist agent</td><td>Load the selected <code>SKILL.md</code></td></tr>
+                <tr><td><strong>Choose operation</strong></td><td>Specialist model chooses its tool</td><td>Advisor model chooses a skill resource</td></tr>
+                <tr><td><strong>Execute</strong></td><td>Tool runs behind the specialist</td><td>Dynamic resource runs on the MCP server</td></tr>
+                <tr><td><strong>Model calls</strong></td><td>Advisor + specialist</td><td>Advisor only</td></tr>
+              </tbody>
+            </table>
+            <p class="takeaway">“Agent as a skill” maps the agent's bounded context to a portable skill; it does not put an agent inside the skill.</p>
+          </section>
+
+          <section>
+            <h2>The remote skill contract</h2>
+            <div class="split">
+              <div>
+                <p class="lead">Each .NET MCP service publishes three progressive layers.</p>
+                <div class="value-grid">
+                  <div><strong>Advertise</strong><span><code>skill://index.json</code><br />name + description</span></div>
+                  <div><strong>Load</strong><span><code>skill://weather/SKILL.md</code><br />domain instructions</span></div>
+                  <div><strong>Act</strong><span><code>skill://weather/forecast/{hours}</code><br />dynamic resource</span></div>
+                  <div><strong>Ground</strong><span>resource handler calls live APIs and services</span></div>
+                </div>
+              </div>
+              <pre><code class="language-csharp" data-trim>
+[McpServerResourceType]
+public sealed class WeatherSkillResources(
+    WeatherDataService weather)
+{
+    [McpServerResource(
+        UriTemplate =
+            "skill://weather/forecast/{hours}",
+        MimeType = "application/json")]
+    public Task&lt;string&gt; GetForecast(int hours) =&gt;
+        weather.GetForecastAsync(hours);
+}
+              </code></pre>
+            </div>
+            <p class="takeaway">Reading a resource executes its handler remotely. The URI template carries the parameters.</p>
+          </section>
+
+          <section>
+            <h2>The advisor receives skills, not provider tools</h2>
+            <div class="split">
+              <pre><code class="language-csharp" data-trim>
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithResources&lt;WeatherSkillResources&gt;();
+
+app.MapMcp("/skillsmcp");
+              </code></pre>
+              <pre><code class="language-python" data-trim>
+sources.append(
+    MCPSkillsSource(client=mcp_session))
+
+skills = SkillsProvider(
+    AggregatingSkillsSource(sources))
+
+agent = client.as_agent(
+    name="skiadvisorskill",
+    context_providers=[skills, history],
+    tools=[ski_researcher.as_tool(...)])
+              </code></pre>
+            </div>
+            <p class="takeaway">MAF adds only <code>load_skill</code> and <code>read_skill_resource</code>; domain operations stay behind MCP resources.</p>
+          </section>
+
+          <section>
+            <h2>Progressive disclosure over the network</h2>
+            <div class="agent-map">
+              <div class="agent-kind">1. Discover</div>
+              <div class="agent-arrow"><span>MCP resources/read</span></div>
+              <div class="agent-client"><code>skill://index.json</code></div>
+              <div class="agent-arrow compact"><span>returns</span></div>
+              <div class="agent-target">brief descriptions</div>
+
+              <div class="agent-kind">2. Select</div>
+              <div class="agent-arrow"><span>model calls</span></div>
+              <div class="agent-client"><code>load_skill("weather")</code></div>
+              <div class="agent-arrow compact"><span>reads</span></div>
+              <div class="agent-target"><code>SKILL.md</code></div>
+
+              <div class="agent-kind">3. Act</div>
+              <div class="agent-arrow"><span>model calls</span></div>
+              <div class="agent-client"><code>read_skill_resource</code></div>
+              <div class="agent-arrow compact"><span>reads</span></div>
+              <div class="agent-target"><code>forecast/24</code></div>
+
+              <div class="agent-kind">4. Execute</div>
+              <div class="agent-arrow"><span>MCP binds URI</span></div>
+              <div class="agent-client"><code>GetForecast(24)</code></div>
+              <div class="agent-arrow compact"><span>HTTP</span></div>
+              <div class="agent-target">live resort data</div>
+            </div>
+            <p class="takeaway">A dynamic resource is tool-like operationally, but selected through skill instructions instead of a function schema.</p>
           </section>
 
           </section>

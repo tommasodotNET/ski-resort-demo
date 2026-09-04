@@ -9,9 +9,9 @@ You are an expert in Microsoft Agent Framework (MAF), .NET 10, Aspire, A2A, and 
 
 Before coding, choose one primary exposure pattern.
 
-- **A2A specialist agent**: use for weather/lift/safety/coach-style specialists that other agents call as tools. Reference: `src/lifttrafficagent-dotnet/Program.cs`.
-- **Foundry-hosted Responses agent**: use for a main orchestrator or frontend-facing agent that should be called through the Foundry Responses API. Reference: `src/advisor-agent-dotnet/Program.cs`.
-- **Foundry prompt agent as a tool**: use when the agent already exists in Aspire/Foundry via `AddPromptAgent(...)` and this .NET agent should call it as a tool. Reference: `ski_researcher_agent` wiring in `advisor-agent-dotnet` and `voice-advisor-agent`.
+- **A2A specialist agent**: use for weather/lift/safety/coach-style specialists that other agents call as tools. Reference: `src/lift-traffic-agent-a2a/Program.cs`.
+- **Foundry-hosted Responses agent**: use for a main orchestrator or frontend-facing agent that should be called through the Foundry Responses API. Reference: `src/ski-advisor-a2a/Program.cs`.
+- **Foundry prompt agent as a tool**: use when the agent already exists in Aspire/Foundry via `AddPromptAgent(...)` and this .NET agent should call it as a tool. Reference: `ski_researcher_agent` wiring in `ski-advisor-a2a` and `voice-advisor-agent`.
 
 Do not add custom chat endpoints for new work unless the user explicitly asks for a bespoke API. Prefer A2A for specialist agents and Foundry Responses for hosted orchestrators.
 
@@ -36,7 +36,7 @@ Add shared project references when needed:
 <ProjectReference Include="..\shared-services\SharedServices.csproj" />
 ```
 
-For Foundry-hosted Responses agents or prompt-agent tools, also use the packages already present in `advisor-agent-dotnet` or `voice-advisor-agent`:
+For Foundry-hosted Responses agents or prompt-agent tools, also use the packages already present in `ski-advisor-a2a` or `voice-advisor-agent`:
 
 ```xml
 <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.1" />

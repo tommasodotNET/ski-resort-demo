@@ -4,6 +4,7 @@ using System.Text.Json;
 using Azure.AI.VoiceLive;
 using Azure.Core;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.A2A;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 
@@ -16,6 +17,8 @@ namespace VoiceAdvisorAgent;
 /// </summary>
 public sealed class VoiceWebSocketHandler
 {
+    private static readonly TimeSpan s_initializationTimeout = TimeSpan.FromSeconds(30);
+
     private readonly WebSocket _clientSocket;
     private readonly TokenCredential _credential;
     private readonly string _endpoint;
@@ -27,6 +30,9 @@ public sealed class VoiceWebSocketHandler
     private readonly string? _conversationId;
     private readonly VoiceConversationStore? _conversationStore;
     private readonly VoiceSessionTraceEmitter _traceEmitter;
+
+    private const string SkillsOrchestratorToolName = "ski_advisor_skill";
+    private AgentSession? _skillsOrchestratorSession;
 
     // Conversation tracking for post-hoc telemetry and persistence
     private readonly List<ConversationMessage> _messages = new();
@@ -68,12 +74,16 @@ public sealed class VoiceWebSocketHandler
 
         try
         {
-            var client = new VoiceLiveClient(new Uri(_endpoint), _credential);
-            await using var session = await client.StartSessionAsync(_model, cancellationToken);
+            using var initializationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            initializationCts.CancelAfter(s_initializationTimeout);
+            var initializationToken = initializationCts.Token;
 
-            await ConfigureSessionAsync(session, _instructions);
-            await InjectConversationHistoryAsync(session, cancellationToken);
-            await SendToClient(new { type = "ready" }, cancellationToken);
+            var client = new VoiceLiveClient(new Uri(_endpoint), _credential);
+            await using var session = await client.StartSessionAsync(_model, initializationToken);
+
+            await ConfigureSessionAsync(session, _instructions, initializationToken);
+            await InjectConversationHistoryAsync(session, initializationToken);
+            await SendToClient(new { type = "ready", conversationId = _conversationId }, initializationToken);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -85,10 +95,21 @@ public sealed class VoiceWebSocketHandler
 
             _logger.LogInformation("Voice Live session ended");
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _errorType = "voice_live_initialization_timeout";
+            _logger.LogError(ex, "Voice Live session initialization timed out after {Timeout}", s_initializationTimeout);
+            await NotifyClientOfFailureAsync("Voice session initialization timed out.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Voice Live session was cancelled");
+        }
         catch (Exception ex)
         {
             _errorType = ex.GetType().FullName;
             _logger.LogError(ex, "Voice Live session failed");
+            await NotifyClientOfFailureAsync("Voice session could not be started.");
         }
         finally
         {
@@ -103,7 +124,31 @@ public sealed class VoiceWebSocketHandler
         }
     }
 
-    private async Task ConfigureSessionAsync(VoiceLiveSession session, string instructions)
+    private async Task NotifyClientOfFailureAsync(string message)
+    {
+        await SendToClient(new { type = "error", message }, CancellationToken.None);
+
+        if (_clientSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+        {
+            try
+            {
+                using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await _clientSocket.CloseOutputAsync(
+                    WebSocketCloseStatus.InternalServerError,
+                    "Voice session failed",
+                    closeCts.Token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not close the client WebSocket after a voice session failure");
+            }
+        }
+    }
+
+    private async Task ConfigureSessionAsync(
+        VoiceLiveSession session,
+        string instructions,
+        CancellationToken cancellationToken)
     {
         // Convert A2A agents to Voice Live tool definitions (analogous to agent.AsAIFunction() in MAF)
         var functionTools = _a2aAgents
@@ -145,7 +190,7 @@ public sealed class VoiceWebSocketHandler
         foreach (var tool in functionTools)
             options.Tools.Add(tool);
 
-        await session.ConfigureSessionAsync(options);
+        await session.ConfigureSessionAsync(options, cancellationToken);
         _logger.LogInformation("Voice Live session configured with {ToolCount} tools", functionTools.Count);
     }
 
@@ -158,7 +203,7 @@ public sealed class VoiceWebSocketHandler
 
         try
         {
-            var messages = await _conversationStore.LoadAsync(_conversationId);
+            var messages = await _conversationStore.LoadAsync(_conversationId, cancellationToken);
             if (messages.Count == 0) return;
 
             foreach (var (role, text) in messages)
@@ -172,6 +217,10 @@ public sealed class VoiceWebSocketHandler
 
                 await session.AddItemAsync(item, cancellationToken);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -394,7 +443,10 @@ public sealed class VoiceWebSocketHandler
                 var query = args.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "";
 
                 var messages = new List<ChatMessage> { new(ChatRole.User, query) };
-                var agentResponse = await agent.RunAsync(messages);
+                var agentSession = await GetOrCreateAgentSessionAsync(functionName, agent);
+                var agentResponse = agentSession is not null
+                    ? await agent.RunAsync(messages, agentSession, cancellationToken: cancellationToken)
+                    : await agent.RunAsync(messages, cancellationToken: cancellationToken);
 
                 var responseText = agentResponse.Text;
                 if (string.IsNullOrEmpty(responseText) && agentResponse.Messages is { Count: > 0 })
@@ -441,6 +493,34 @@ public sealed class VoiceWebSocketHandler
         }
     }
 
+    private async ValueTask<AgentSession?> GetOrCreateAgentSessionAsync(string functionName, AIAgent agent)
+    {
+        if (_conversationId is null
+            || functionName != SkillsOrchestratorToolName
+            || agent is not A2AAgent a2aAgent)
+        {
+            return null;
+        }
+
+        if (_skillsOrchestratorSession is not null)
+        {
+            return _skillsOrchestratorSession;
+        }
+
+        try
+        {
+            _skillsOrchestratorSession = await a2aAgent.CreateSessionAsync(_conversationId);
+            return _skillsOrchestratorSession;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not create an A2A session for tool {FunctionName}; falling back to a stateless call",
+                functionName);
+            return null;
+        }
+    }
+
     private async Task SendToClient(object message, CancellationToken cancellationToken)
     {
         if (_clientSocket.State != WebSocketState.Open) return;
@@ -451,6 +531,10 @@ public sealed class VoiceWebSocketHandler
         try
         {
             await _clientSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

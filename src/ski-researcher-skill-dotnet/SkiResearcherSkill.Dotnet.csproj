@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <!-- Pinned to match the transitively-resolved version elsewhere in the dependency graph (e.g.
-         advisor-agent-dotnet): Azure.AI.Extensions.OpenAI's ProjectResponsesClient must be extended by the
+         ski-advisor-a2a): Azure.AI.Extensions.OpenAI's ProjectResponsesClient must be extended by the
          SAME Microsoft.Extensions.AI.OpenAI build that AsIChatClient resolves against, or the compiler treats
          the OpenAI.Responses.ResponsesClient base type as a different type identity (CS1061). -->
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />

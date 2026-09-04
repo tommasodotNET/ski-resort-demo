@@ -3,7 +3,12 @@ export interface ResponsesStreamEvent {
   contextId?: string;
 }
 
-const ADVISOR_AGENT_NAME = 'advisoragent-ha';
+export type AdvisorArchitecture = 'a2a' | 'skill';
+
+const ADVISOR_AGENT_NAMES: Record<AdvisorArchitecture, string> = {
+  a2a: 'skiadvisora2a-ha',
+  skill: 'skiadvisorskill-ha',
+};
 
 interface ResponseStreamPayload {
   type?: string;
@@ -66,11 +71,13 @@ async function* parseSseStream(stream: ReadableStream<Uint8Array>): AsyncGenerat
 
 export async function* sendMessageStream(
   text: string,
+  architecture: AdvisorArchitecture,
   contextId?: string,
 ): AsyncGenerator<ResponsesStreamEvent, void, undefined> {
+  const agentName = ADVISOR_AGENT_NAMES[architecture];
   const requestBody: Record<string, unknown> = {
-    model: ADVISOR_AGENT_NAME,
-    agent_reference: { type: 'agent_reference', name: ADVISOR_AGENT_NAME },
+    model: agentName,
+    agent_reference: { type: 'agent_reference', name: agentName },
     input: [
       {
         type: 'message',
@@ -79,14 +86,14 @@ export async function* sendMessageStream(
       },
     ],
     stream: true,
-    metadata: { entity_id: ADVISOR_AGENT_NAME },
+    metadata: { entity_id: agentName },
   };
 
   if (contextId) {
     requestBody.conversation = contextId;
   }
 
-  const response = await fetch('/responses', {
+  const response = await fetch(`/responses/${architecture}`, {
     method: 'POST',
     headers: {
       Accept: 'text/event-stream',

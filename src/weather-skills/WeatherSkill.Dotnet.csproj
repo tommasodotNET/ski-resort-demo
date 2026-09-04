@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);MCPEXP001</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- MCP server hosting: exposes SEP-2640 discovery, SKILL.md, and live sibling resources. -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\service-defaults\service-defaults.csproj" />
+  </ItemGroup>
+</Project>

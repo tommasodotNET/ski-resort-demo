@@ -11,7 +11,6 @@ using Azure.Identity;
 #pragma warning disable OPENAI001
 
 const string DataGeneratorClientName = "datagenerator";
-const string VoiceAdvisorEndpoint = "http://voiceadvisoragent";
 const string VoiceAdvisorPath = "/ws/voice";
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 
@@ -41,9 +40,11 @@ app.MapGet("/readiness", () => Results.Ok("Ready"));
 
 app.Map("/api/{**catchAll}", (HttpContext context, IHttpClientFactory httpClientFactory, CancellationToken cancellationToken) =>
     ProxyHttpAsync(context, httpClientFactory, DataGeneratorClientName, cancellationToken));
-app.MapPost("/responses", ProxyFoundryResponsesAsync);
-app.Map("/ws/voice", context => ProxyWebSocketAsync(context, VoiceAdvisorPath));
-app.Map("/ws/live", context => ProxyWebSocketAsync(context, VoiceAdvisorPath));
+app.MapPost("/responses/{architecture}", ProxyFoundryResponsesAsync);
+app.Map("/ws/voice/{architecture}", (string architecture, HttpContext context) =>
+    ProxyWebSocketAsync(context, GetVoiceAdvisorEndpoint(architecture), VoiceAdvisorPath));
+app.Map("/ws/live/{architecture}", (string architecture, HttpContext context) =>
+    ProxyWebSocketAsync(context, GetVoiceAdvisorEndpoint(architecture), VoiceAdvisorPath));
 
 app.MapFallbackToFile("index.html");
 
@@ -70,11 +71,12 @@ static async Task ProxyHttpAsync(
 }
 
 static async Task ProxyFoundryResponsesAsync(
+    string architecture,
     HttpContext context,
     FoundryResponsesClientProvider clientProvider,
     CancellationToken cancellationToken)
 {
-    var responseClient = await clientProvider.GetClientAsync(cancellationToken);
+    var responseClient = await clientProvider.GetClientAsync(architecture, cancellationToken);
     using var requestContent = await CreateFoundryRequestContentAsync(context.Request, cancellationToken);
     var requestOptions = CreateFoundryRequestOptions(context.Request, cancellationToken);
     using var responseMessage = (await responseClient.CreateResponseAsync(requestContent, requestOptions)).GetRawResponse();
@@ -185,7 +187,7 @@ static HttpRequestMessage CreateProxyRequest(HttpRequest request, string targetP
     return requestMessage;
 }
 
-static async Task ProxyWebSocketAsync(HttpContext context, string targetPath)
+static async Task ProxyWebSocketAsync(HttpContext context, string targetEndpoint, string targetPath)
 {
     if (!context.WebSockets.IsWebSocketRequest)
     {
@@ -194,7 +196,7 @@ static async Task ProxyWebSocketAsync(HttpContext context, string targetPath)
         return;
     }
 
-    var targetUri = BuildWebSocketUri(context.Request, targetPath);
+    var targetUri = BuildWebSocketUri(context.Request, targetEndpoint, targetPath);
 
     using var downstreamSocket = await context.WebSockets.AcceptWebSocketAsync();
     using var upstreamSocket = new ClientWebSocket();
@@ -211,9 +213,9 @@ static async Task ProxyWebSocketAsync(HttpContext context, string targetPath)
     await Task.WhenAny(downstreamToUpstream, upstreamToDownstream);
 }
 
-static Uri BuildWebSocketUri(HttpRequest request, string targetPath)
+static Uri BuildWebSocketUri(HttpRequest request, string targetEndpoint, string targetPath)
 {
-    var builder = new UriBuilder(VoiceAdvisorEndpoint)
+    var builder = new UriBuilder(targetEndpoint)
     {
         Scheme = "ws",
         Path = targetPath,
@@ -222,6 +224,15 @@ static Uri BuildWebSocketUri(HttpRequest request, string targetPath)
 
     return builder.Uri;
 }
+
+static string GetVoiceAdvisorEndpoint(string architecture)
+    => architecture switch
+    {
+        "a2a" => "http://voiceadvisora2a",
+        "skill" => "http://voiceadvisorskill",
+        _ => throw new BadHttpRequestException(
+            $"Unknown voice advisor architecture '{architecture}'.")
+    };
 
 static async Task PumpWebSocketAsync(WebSocket source, WebSocket destination, CancellationToken cancellationToken)
 {
@@ -303,24 +314,32 @@ static bool ShouldSkipResponseHeader(string headerName)
 
 sealed class FoundryResponsesClientProvider(AIProjectClient projectClient)
 {
-    private const string AdvisorAgentName = "advisoragent-ha";
-
     private readonly SemaphoreSlim initializationLock = new(1, 1);
-    private ProjectResponsesClient? responseClient;
+    private readonly Dictionary<string, ProjectResponsesClient> responseClients = [];
 
-    public async Task<ProjectResponsesClient> GetClientAsync(CancellationToken cancellationToken)
+    public async Task<ProjectResponsesClient> GetClientAsync(
+        string architecture,
+        CancellationToken cancellationToken)
     {
-        if (responseClient is not null)
+        var agentName = architecture switch
         {
-            return responseClient;
+            "a2a" => "skiadvisora2a-ha",
+            "skill" => "skiadvisorskill-ha",
+            _ => throw new ArgumentException($"Unknown advisor architecture '{architecture}'.", nameof(architecture)),
+        };
+
+        if (responseClients.TryGetValue(agentName, out var existingClient))
+        {
+            return existingClient;
         }
 
         await initializationLock.WaitAsync(cancellationToken);
         try
         {
-            if (responseClient is null)
+            if (!responseClients.TryGetValue(agentName, out var responseClient))
             {
-                responseClient = projectClient.ProjectOpenAIClient.GetProjectResponsesClientForAgentEndpoint(AdvisorAgentName);
+                responseClient = projectClient.ProjectOpenAIClient.GetProjectResponsesClientForAgentEndpoint(agentName);
+                responseClients[agentName] = responseClient;
             }
 
             return responseClient;
@@ -331,4 +350,3 @@ sealed class FoundryResponsesClientProvider(AIProjectClient projectClient)
         }
     }
 }
-

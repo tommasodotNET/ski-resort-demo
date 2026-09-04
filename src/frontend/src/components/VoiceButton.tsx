@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceSession, type VoiceStatus, type VoiceTranscript } from '../lib/VoiceSession';
+import type { AdvisorArchitecture } from '../lib/responses-client';
 
 interface VoiceButtonProps {
     onTranscript: (transcript: VoiceTranscript) => void;
@@ -7,6 +8,7 @@ interface VoiceButtonProps {
     onClearAudio?: () => void;
     disabled?: boolean;
     conversationId?: string;
+    architecture: AdvisorArchitecture;
 }
 
 const STATUS_LABELS: Record<VoiceStatus, string> = {
@@ -18,12 +20,24 @@ const STATUS_LABELS: Record<VoiceStatus, string> = {
     function_calling: '🔧 Searching...',
 };
 
-export default function VoiceButton({ onTranscript, onConversationId, onClearAudio, disabled, conversationId }: VoiceButtonProps) {
+export default function VoiceButton({
+    onTranscript,
+    onConversationId,
+    onClearAudio,
+    disabled,
+    conversationId,
+    architecture,
+}: VoiceButtonProps) {
     const [status, setStatus] = useState<VoiceStatus>('disconnected');
     const [error, setError] = useState<string | null>(null);
     const sessionRef = useRef<VoiceSession | null>(null);
 
     const isActive = status !== 'disconnected';
+
+    useEffect(() => () => {
+        void sessionRef.current?.stop();
+        sessionRef.current = null;
+    }, []);
 
     const toggleVoice = useCallback(async () => {
         if (isActive) {
@@ -42,10 +56,10 @@ export default function VoiceButton({ onTranscript, onConversationId, onClearAud
                 setError(msg);
                 console.error('Voice error:', msg);
             },
-        }, conversationId);
+        }, conversationId, architecture);
         sessionRef.current = session;
         await session.start();
-    }, [isActive, onTranscript, onConversationId, onClearAudio, conversationId]);
+    }, [isActive, onTranscript, onConversationId, onClearAudio, conversationId, architecture]);
 
     const statusLabel = STATUS_LABELS[status];
 

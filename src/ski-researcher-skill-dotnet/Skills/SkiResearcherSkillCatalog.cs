@@ -10,7 +10,7 @@ namespace SkiResearcherSkill.Dotnet.Skills;
 /// </summary>
 /// <remarks>
 /// Bridges the agent-as-tool world (the existing <c>ski-researcher-agent-a2a</c> Foundry prompt agent, wired
-/// as a tool in <c>advisor-agent-dotnet/Program.cs</c>) and the skills world (MCP, SEP-2640):
+/// as a tool in <c>ski-advisor-a2a/Program.cs</c>) and the skills world (MCP, SEP-2640):
 /// <see cref="Description"/> is the same text used to describe the agent when it is wired as an
 /// <c>AIFunction</c> tool elsewhere ("agent descriptions become skill descriptions"), and
 /// <see cref="BuildSkillMarkdown"/> renders the agent's single callable action
