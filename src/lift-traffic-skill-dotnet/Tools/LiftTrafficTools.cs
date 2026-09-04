@@ -1,20 +1,18 @@
 using System.ComponentModel;
+using LiftTrafficSkill.Dotnet.Services;
 using Microsoft.Extensions.AI;
-using LiftTrafficAgent.Dotnet.Services;
 using ModelContextProtocol.Server;
 
-namespace LiftTrafficAgent.Dotnet.Tools;
+namespace LiftTrafficSkill.Dotnet.Tools;
 
 /// <summary>
-/// The Lift Traffic Agent's tools.
+/// The lift-traffic skill's tools ("scripts"), registered as literal MCP tools on this standalone server.
 /// </summary>
 /// <remarks>
-/// Each method below is dual-hosted: <see cref="GetFunctions"/> exposes it as an <see cref="AIFunction"/> for the
-/// agent's own A2A-facing <c>ChatClientAgent</c> (see <c>Program.cs</c>'s <c>AddAIAgent(...).AddA2AServer()</c>),
-/// while the <see cref="McpServerToolAttribute"/> on the same method exposes it as a literal MCP tool — the
-/// "script" a skills-based orchestrator invokes after discovering this agent's skill over MCP (see
-/// <c>Skills/LiftTrafficSkillResources.cs</c>). There is exactly one implementation per capability; only the
-/// hosting surface differs.
+/// This is a standalone MCP skill-provider counterpart to the existing <c>lift-traffic-agent-a2a</c> A2A agent
+/// (<c>lift-traffic-agent-dotnet</c>) — it does not replace or modify it. The same tool logic is faithfully
+/// reused here (see <c>Services/LiftDataService.cs</c>); <see cref="GetFunctions"/> exists purely to extract
+/// the <see cref="DescriptionAttribute"/> metadata below for the SKILL.md "Scripts" table.
 /// </remarks>
 [McpServerToolType]
 public class LiftTrafficTools
@@ -55,6 +53,7 @@ public class LiftTrafficTools
         return await _liftDataService.SuggestLessBusyAreaAsync();
     }
 
+    /// <summary>Used only to derive the SKILL.md "Scripts" table from the same [Description] metadata above.</summary>
     public IEnumerable<AIFunction> GetFunctions()
     {
         return
