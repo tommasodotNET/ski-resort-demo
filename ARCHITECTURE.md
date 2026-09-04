@@ -7,18 +7,24 @@ AlpineAI is a distributed, cloud-native, multi-agent system representing an inte
 The system is built using:
 
 * **Microsoft Agent Framework (MAF)** as the agent orchestration layer
-* **Agent-to-Agent (A2A)** protocol to expose each agent
+* **Agent-to-Agent (A2A)** for the existing agent-as-tool path
+* **SEP-2640 Agent Skills over MCP** for the parallel skills path
 * **[Aspire](https://aspire.dev)** as the local development orchestrator
 * Polyglot microservices (.NET + Python + Go)
 * Real-time fake telemetry generator
 * Event-driven communication
 * A real-time frontend dashboard
 
-The central orchestrator is:
+The app deliberately exposes two equivalent orchestration paths:
 
-> **Ski Resort Advisor Agent** (built in .NET)
+* `skiadvisora2a`: the existing .NET orchestrator consuming A2A agents as tools.
+* `skiadvisorskill`: a Python orchestrator discovering .NET-hosted skills over MCP.
 
-All specialist agents are exposed via A2A and consumed as tools.
+Weather, lift traffic, safety, and ski coach have paired compact Aspire
+resources (`weatheragenta2a`/`weatherskills`, `safetyagenta2a`/`safetyskills`,
+`skicoachagenta2a`/`skicoachskills`, and
+`lifttrafficagenta2a`/`lifttrafficskills`). The existing Foundry ski researcher
+remains a direct agent tool available to both orchestrators.
 
 ---
 
@@ -28,7 +34,10 @@ All specialist agents are exposed via A2A and consumed as tools.
 
 | Component                | Language                       | Role                              |
 | ------------------------ | ------------------------------ | --------------------------------- |
-| Ski Resort Advisor Agent | .NET                           | Orchestrator agent                |
+| Ski Advisor A2A           | .NET                           | A2A agent-as-tool orchestrator    |
+| Ski Advisor Skill         | Python                         | MCP Agent Skills orchestrator     |
+| Voice Advisor A2A         | .NET                           | Voice Live bridge to A2A specialists |
+| Voice Advisor Skill       | .NET                           | Voice Live bridge to the skills orchestrator |
 | Weather Agent            | Python                         | Weather intelligence              |
 | Lift Traffic Agent       | .NET                           | Lift congestion analysis          |
 | Safety Agent             | Python                         | Risk & slope safety validation    |
@@ -44,30 +53,153 @@ All specialist agents are exposed via A2A and consumed as tools.
 
 ## Microsoft Agent Framework (MAF)
 
-All agents must:
+The A2A path exposes specialist Agent Cards and invokes them as remote tools.
+The skills path exposes `skill://index.json`, `skill://<name>/SKILL.md`, and
+dynamic sibling resources from independent .NET MCP services. The Python
+orchestrator combines those skills with the Foundry researcher agent as a normal tool and uses
+`MCPSkillsSource` for progressive disclosure and `CosmosHistoryProvider` with a
+dedicated `/session_id`-partitioned `skillhistory` container.
 
-* Be implemented using Microsoft Agent Framework
-* Expose capabilities as tools
-* Support A2A protocol
-* Register with discovery mechanism
+## Agent as a Tool vs Agent as a Skill
 
-Each agent must:
+The term **agent as a skill** describes how this sample maps an existing
+specialist-agent boundary onto Agent Skills. The skill is not itself an agent.
+It carries the same bounded domain context—description, instructions, references,
+and operations—but lets the advisor model execute that context directly.
 
-* Expose:
+```mermaid
+flowchart LR
+    subgraph A2A["Agent as a tool"]
+        OA[Advisor model] -->|A2A agent function| SA[Specialist model]
+        SA -->|function call| ST[Specialist tool]
+        ST --> SA --> OA
+    end
 
-  * `/agent/manifest`
-  * `/agent/invoke`
-  * `/agent/health`
-* Support structured tool definitions
-* Use JSON schema contracts
+    subgraph Skills["Agent as a skill"]
+        OS[Advisor model] -->|load_skill| MD[Remote SKILL.md]
+        MD -->|instructions name a resource| OS
+        OS -->|read_skill_resource| DR[Dynamic MCP resource]
+        DR -->|service/API call| DATA[Live resort data]
+        DATA --> DR --> OS
+    end
+```
+
+| Concern | Agent as a tool | Agent as a skill |
+|---|---|---|
+| Initial discovery | A2A Agent Card becomes an advisor function | `skill://index.json` advertises name and description |
+| Domain instructions | Owned by the specialist model | Loaded into the advisor run from `SKILL.md` |
+| Operation selection | Specialist model selects a function | Advisor model selects a sibling resource |
+| Remote execution | Specialist tool executes behind the A2A agent | MCP resource handler executes on the skill provider |
+| Model calls | Advisor + specialist | Advisor only |
+
+## MCP Skill Contract
+
+Each provider exposes the same three layers:
+
+```text
+skill://index.json                       # L1 discovery metadata
+skill://weather/SKILL.md                 # L2 domain instructions
+skill://weather/forecast/{hours}         # L3 dynamic sibling resource
+```
+
+The server-side resource handler is executable application code:
+
+```csharp
+[McpServerResourceType]
+public sealed class WeatherSkillResources(WeatherDataService weather)
+{
+    [McpServerResource(
+        UriTemplate = "skill://weather/forecast/{hours}",
+        Name = "Weather Forecast",
+        MimeType = "application/json")]
+    public Task<string> GetForecast(int hours) =>
+        weather.GetForecastAsync(hours);
+}
+```
+
+`McpServerResource` describes how the method is reached over MCP. When the
+advisor reads `skill://weather/forecast/24`, the MCP server binds `24` to
+`hours`, executes the method remotely, and returns its result as resource
+content. The handler may call `datagenerator`, a database, or another downstream
+service.
+
+The providers intentionally register no MCP domain tools:
+
+```csharp
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithResources<WeatherSkillResources>();
+
+app.MapMcp("/skillsmcp");
+```
+
+The Python advisor likewise registers no direct provider tools:
+
+```python
+sources = [
+    MCPSkillsSource(client=weather_session),
+    MCPSkillsSource(client=safety_session),
+    MCPSkillsSource(client=coach_session),
+    MCPSkillsSource(client=lift_session),
+]
+
+skills = SkillsProvider(AggregatingSkillsSource(sources))
+
+agent = client.as_agent(
+    name="skiadvisorskill",
+    context_providers=[skills, history],
+    tools=[ski_researcher_agent.as_tool(...)],
+)
+```
+
+Agent Framework advertises the generic `load_skill` and
+`read_skill_resource` functions. A typical weather request proceeds as follows:
+
+```mermaid
+sequenceDiagram
+    participant O as skiadvisorskill
+    participant L as Advisor model
+    participant M as weatherskills MCP
+    participant D as datagenerator
+
+    O->>M: resources/read skill://index.json
+    M-->>O: weather name + description
+    O->>L: prompt + advertised skill
+    L->>O: load_skill("weather")
+    O->>M: resources/read skill://weather/SKILL.md
+    M-->>O: instructions + resource templates
+    O->>L: loaded weather instructions
+    L->>O: read_skill_resource("weather", "forecast/24")
+    O->>M: resources/read skill://weather/forecast/24
+    M->>D: GET current weather data
+    D-->>M: telemetry JSON
+    M-->>O: dynamic resource content
+    O->>L: current forecast
+    L-->>O: final answer
+```
+
+Dynamic resources are tool-like because reading them can execute arbitrary
+server-side logic. They remain resources semantically: the model chooses a
+relative URI described by `SKILL.md`, rather than invoking a domain function
+with a JSON Schema. This keeps the provider behind the Agent Skills abstraction
+and preserves progressive disclosure.
 
 ---
 
-# 3. Ski Resort Advisor Agent (.NET)
+# 3. Ski Resort Advisor Orchestrators
 
 ## Role
 
-The Ski Resort Advisor Agent is the system orchestrator.
+`skiadvisora2a` remains the default Responses-based chat orchestrator.
+`skiadvisorskill` provides the alternative skills-based architecture and is
+also exposed over A2A so the Voice Live bridge can call it as a remote tool.
+
+Voice uses two Aspire resources backed by the same .NET project:
+`voiceadvisora2a` registers the weather, lift traffic, safety, and ski coach
+A2A agents plus the Foundry ski researcher, while `voiceadvisorskill`
+registers only the `skiadvisorskilla2a` adapter. The frontend selects the
+matching `/ws/voice/a2a` or `/ws/voice/skill` proxy route and preserves the
+conversation ID in either architecture.
 
 It:
 
@@ -418,11 +550,17 @@ User:
 
 ```
 /alpine-ai
-  /advisor-agent-dotnet
-  /lifttrafficagent-dotnet
-  /weatheragent-python
-  /safetyagent-python
-  /skicoachagent-python
+  /ski-advisor-a2a
+  /ski-advisor-skill
+  /voice-advisor-agent
+  /lift-traffic-agent-a2a
+  /weather-agent-a2a
+  /safety-agent-a2a
+  /ski-coach-agent-a2a
+  /weather-skills
+  /safety-skills
+  /ski-coach-skills
+  /lift-traffic-skills
   /data-generator
   /frontend
   /infrastructure

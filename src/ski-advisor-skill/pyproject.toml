@@ -1,0 +1,40 @@
+[project]
+name = "ski-advisor-skill"
+version = "0.1.0"
+description = "AlpineAI orchestrator that consumes remote SEP-2640 Agent Skills over MCP through A2A and Foundry Responses hosts"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.25.0",
+    "opentelemetry-api>=1.33.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.33.0",
+    "opentelemetry-instrumentation-fastapi>=0.54b0",
+    "opentelemetry-sdk>=1.33.0",
+    "grpcio>=1.50.0",
+    "typing-extensions>=4.12.0",
+    "python-dotenv>=1.0.1",
+    "mcp>=1.24.0",
+    "agent-framework>=1.17.0",
+    "agent-framework-a2a",
+    "agent-framework-azure-cosmos",
+    "agent-framework-foundry>=1.12.0",
+    "agent-framework-foundry-hosting>=1.0.0b260903",
+    "azure-identity>=1.19.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["skills_orchestrator_python"]
+
+[tool.uv]
+prerelease = "allow"
+
+[project.scripts]
+start = "skills_orchestrator_python.main:main"
+start-responses = "skills_orchestrator_python.foundry_responses_main:main"
+cli = "skills_orchestrator_python.cli:run"

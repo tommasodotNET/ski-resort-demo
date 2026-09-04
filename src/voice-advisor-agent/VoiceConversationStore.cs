@@ -23,7 +23,9 @@ public sealed class VoiceConversationStore
     /// Loads previous conversation messages from Cosmos DB for the given conversation ID.
     /// Returns a list of (role, text) tuples ordered by timestamp.
     /// </summary>
-    public async Task<List<(string role, string text)>> LoadAsync(string conversationId)
+    public async Task<List<(string role, string text)>> LoadAsync(
+        string conversationId,
+        CancellationToken cancellationToken = default)
     {
         var query = new QueryDefinition(
             "SELECT * FROM c WHERE c.conversationId = @convId AND c.type = @type ORDER BY c.timestamp ASC")
@@ -36,7 +38,7 @@ public sealed class VoiceConversationStore
 
         while (iterator.HasMoreResults)
         {
-            var response = await iterator.ReadNextAsync();
+            var response = await iterator.ReadNextAsync(cancellationToken);
             foreach (var doc in response)
             {
                 var role = doc.GetProperty("role").GetString() ?? "";

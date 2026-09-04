@@ -6,10 +6,14 @@
 #:package Aspire.Hosting.JavaScript@13.5.3
 #:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
 
-#:project ./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj
-#:project ./lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj
+#:project ./ski-advisor-a2a/AdvisorAgent.Dotnet.csproj
+#:project ./lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj
+#:project ./lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
 #:project ./responses-gateway/ResponsesGateway.csproj
+#:project ./safety-skills/SafetySkill.Dotnet.csproj
+#:project ./ski-coach-skills/SkiCoachSkill.Dotnet.csproj
 #:project ./voice-advisor-agent/VoiceAdvisorAgent.csproj
+#:project ./weather-skills/WeatherSkill.Dotnet.csproj
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -29,7 +33,7 @@ var voiceDeployment = project.AddModelDeployment("gptrealtime", FoundryModel.Ope
 
 var webSearch = project.AddWebSearchTool("websearch");
 
-var skiResearcher =project.AddPromptAgent("skiresearcher", deployment,
+var skiResearcher = project.AddPromptAgent("skiresearcher", deployment,
     instructions: """You are a ski researcher agent. Your job is to research and provide information about ski.""")
     .WithTool(webSearch);
 
@@ -44,6 +48,7 @@ var cosmos = builder.AddAzureCosmosDB("cosmosdb")
 var db = cosmos.AddCosmosDatabase("db");
 var conversations = db.AddContainer("conversations", "/conversationId");
 var sessions = db.AddContainer("sessions", "/conversationId");
+var skillHistory = db.AddContainer("skillhistory", "/session_id");
 
 // ---------------------------------------------------------------------------
 // Data Generator (Go)
@@ -58,7 +63,7 @@ var dataGenerator = builder.AddGolangApp("datagenerator", "./data-generator")
 // ---------------------------------------------------------------------------
 // Weather Agent (Python)
 // ---------------------------------------------------------------------------
-var weatherAgent = builder.AddUvicornApp("weatheragent", "./weather-agent-python", "weather_agent_python.main:app")
+var weatherAgent = builder.AddUvicornApp("weatheragenta2a", "./weather-agent-a2a", "weather_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -70,7 +75,7 @@ weatherAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, weatherAgent.Ge
 // ---------------------------------------------------------------------------
 // Safety Agent (Python)
 // ---------------------------------------------------------------------------
-var safetyAgent = builder.AddUvicornApp("safetyagent", "./safety-agent-python", "safety_agent_python.main:app")
+var safetyAgent = builder.AddUvicornApp("safetyagenta2a", "./safety-agent-a2a", "safety_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -82,7 +87,7 @@ safetyAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, safetyAgent.GetE
 // ---------------------------------------------------------------------------
 // Ski Coach Agent (Python)
 // ---------------------------------------------------------------------------
-var coachAgent = builder.AddUvicornApp("skicoachagent", "./ski-coach-agent-python", "ski_coach_agent_python.main:app")
+var coachAgent = builder.AddUvicornApp("skicoachagenta2a", "./ski-coach-agent-a2a", "ski_coach_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -94,7 +99,7 @@ coachAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, coachAgent.GetEnd
 // ---------------------------------------------------------------------------
 // Lift Traffic Agent (.NET)
 // ---------------------------------------------------------------------------
-var liftAgent = builder.AddProject("lifttrafficagent", "./lift-traffic-agent-dotnet/LiftTrafficAgent.Dotnet.csproj")
+var liftAgent = builder.AddProject("lifttrafficagenta2a", "./lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj")
     .WithExternalHttpEndpoints()
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -102,9 +107,72 @@ var liftAgent = builder.AddProject("lifttrafficagent", "./lift-traffic-agent-dot
 liftAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, liftAgent.GetEndpoint("http"));
 
 // ---------------------------------------------------------------------------
-// Advisor Agent (.NET) — Orchestrator
+// MCP-hosted Agent Skills (.NET)
 // ---------------------------------------------------------------------------
-var advisorAgent = builder.AddProject("advisoragent", "./advisor-agent-dotnet/AdvisorAgent.Dotnet.csproj")
+var weatherSkill = builder.AddProject("weatherskills", "./weather-skills/WeatherSkill.Dotnet.csproj")
+    .WithHttpEndpoint()
+    .WithReference(dataGenerator).WaitFor(dataGenerator)
+    .WithComputeEnvironment(aca);
+
+var safetySkill = builder.AddProject("safetyskills", "./safety-skills/SafetySkill.Dotnet.csproj")
+    .WithHttpEndpoint()
+    .WithReference(dataGenerator).WaitFor(dataGenerator)
+    .WithComputeEnvironment(aca);
+
+var coachSkill = builder.AddProject("skicoachskills", "./ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
+    .WithHttpEndpoint()
+    .WithReference(dataGenerator).WaitFor(dataGenerator)
+    .WithComputeEnvironment(aca);
+
+var liftSkill = builder.AddProject("lifttrafficskills", "./lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
+    .WithHttpEndpoint()
+    .WithReference(dataGenerator).WaitFor(dataGenerator)
+    .WithComputeEnvironment(aca);
+
+// ---------------------------------------------------------------------------
+// Skills Orchestrator A2A adapter (Python, used by Voice Live)
+// ---------------------------------------------------------------------------
+var skillsAdvisorA2A = builder.AddUvicornApp(
+        "skiadvisorskilla2a",
+        "./ski-advisor-skill",
+        "skills_orchestrator_python.main:app")
+    .WithUv()
+    .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health")
+    .WithReference(deployment).WaitFor(deployment)
+    .WithReference(weatherSkill).WaitFor(weatherSkill)
+    .WithReference(safetySkill).WaitFor(safetySkill)
+    .WithReference(coachSkill).WaitFor(coachSkill)
+    .WithReference(liftSkill).WaitFor(liftSkill)
+    .WithReference(skiResearcher).WaitFor(skiResearcher)
+    .WithReference(skillHistory).WaitFor(skillHistory)
+    .WithComputeEnvironment(aca);
+skillsAdvisorA2A.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, skillsAdvisorA2A.GetEndpoint("http"));
+
+// ---------------------------------------------------------------------------
+// Skills Orchestrator (Python) — Foundry hosted Responses agent
+// ---------------------------------------------------------------------------
+var skillsAdvisor = builder.AddPythonExecutable(
+        "skiadvisorskill",
+        "./ski-advisor-skill",
+        "start-responses")
+    .WithUv()
+    .WithReference(deployment).WaitFor(deployment)
+    .WithReference(weatherSkill).WaitFor(weatherSkill)
+    .WithReference(safetySkill).WaitFor(safetySkill)
+    .WithReference(coachSkill).WaitFor(coachSkill)
+    .WithReference(liftSkill).WaitFor(liftSkill)
+    .WithReference(skiResearcher).WaitFor(skiResearcher)
+    .WithReference(skillHistory).WaitFor(skillHistory)
+    .WithComputeEnvironment(aca)
+    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0")
+    .WithEndpoint("http", endpoint => endpoint.TargetPort = 8089)
+    .WithEnvironment("SKILLS_ADVISOR_PORT", "8089");
+
+// ---------------------------------------------------------------------------
+// A2A Orchestrator (.NET)
+// ---------------------------------------------------------------------------
+var advisorAgent = builder.AddProject("skiadvisora2a", "./ski-advisor-a2a/AdvisorAgent.Dotnet.csproj")
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(weatherAgent).WaitFor(weatherAgent)
     .WithReference(liftAgent).WaitFor(liftAgent)
@@ -114,9 +182,9 @@ var advisorAgent = builder.AddProject("advisoragent", "./advisor-agent-dotnet/Ad
     .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0" );
 
 // ---------------------------------------------------------------------------
-// Voice Advisor Agent (.NET) — Voice orchestrator via WebSocket + Voice Live
+// Voice Advisor Agents (.NET) — architecture-specific Voice Live bridges
 // ---------------------------------------------------------------------------
-var voiceAdvisorAgent = builder.AddProject("voiceadvisoragent", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
+var voiceAdvisorA2A = builder.AddProject("voiceadvisora2a", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
     .WithReference(project).WaitFor(project)
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(voiceDeployment).WaitFor(voiceDeployment)
@@ -126,15 +194,25 @@ var voiceAdvisorAgent = builder.AddProject("voiceadvisoragent", "./voice-advisor
     .WithReference(safetyAgent).WaitFor(safetyAgent)
     .WithReference(coachAgent).WaitFor(coachAgent)
     .WithReference(skiResearcher).WaitFor(skiResearcher)
+    .WithEnvironment("VOICE_ADVISOR_ARCHITECTURE", "a2a")
+    .WithComputeEnvironment(aca);
+
+var voiceAdvisorSkill = builder.AddProject("voiceadvisorskill", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
+    .WithReference(voiceDeployment).WaitFor(voiceDeployment)
+    .WithReference(conversations).WaitFor(conversations)
+    .WithReference(skillsAdvisorA2A).WaitFor(skillsAdvisorA2A)
+    .WithEnvironment("VOICE_ADVISOR_ARCHITECTURE", "skill")
     .WithComputeEnvironment(aca);
 
 // ---------------------------------------------------------------------------
 // Frontend Dashboard (Vite + React)
 // ---------------------------------------------------------------------------
 var frontend = builder.AddViteApp("frontend", "./frontend", "dev")
-    .WithReference(voiceAdvisorAgent).WaitFor(voiceAdvisorAgent)
+    .WithReference(voiceAdvisorA2A).WaitFor(voiceAdvisorA2A)
+    .WithReference(voiceAdvisorSkill).WaitFor(voiceAdvisorSkill)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithReference(advisorAgent).WaitFor(advisorAgent)
+    .WithReference(skillsAdvisor).WaitFor(skillsAdvisor)
     .WithUrls((e) =>
     {
         e.Urls.Clear();
@@ -148,8 +226,10 @@ if (builder.ExecutionContext.IsPublishMode)
         .WithHttpEndpoint(env: "PORT")
         .WithExternalHttpEndpoints()
         .WithReference(advisorAgent).WaitFor(advisorAgent)
+        .WithReference(skillsAdvisor).WaitFor(skillsAdvisor)
         .WithReference(dataGenerator).WaitFor(dataGenerator)
-        .WithReference(voiceAdvisorAgent).WaitFor(voiceAdvisorAgent)
+        .WithReference(voiceAdvisorA2A).WaitFor(voiceAdvisorA2A)
+        .WithReference(voiceAdvisorSkill).WaitFor(voiceAdvisorSkill)
         .WithReference(project).WaitFor(project)
         .WithHttpHealthCheck("/readiness")
         .PublishWithContainerFiles(frontend, "./wwwroot")

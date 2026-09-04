@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
-import { sendMessageStream, resetClient } from '../lib/responses-client';
+import {
+  sendMessageStream,
+  resetClient,
+  type AdvisorArchitecture,
+} from '../lib/responses-client';
 import type { VoiceTranscript } from '../lib/VoiceSession';
 import VoiceButton from './VoiceButton';
 
@@ -15,6 +19,7 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [architecture, setArchitecture] = useState<AdvisorArchitecture>('a2a');
   const [contextId, setContextId] = useState<string | undefined>(undefined);
   const contextIdRef = useRef<string | undefined>(undefined);
   const endRef = useRef<HTMLDivElement>(null);
@@ -41,7 +46,7 @@ export default function ChatPanel() {
       setMessages([{ role: 'agent', text: '', source: 'chat' }]);
       accRef.current = '';
       try {
-        for await (const event of sendMessageStream('Greet the user and briefly offer ski resort advisory help.', undefined)) {
+        for await (const event of sendMessageStream('Greet the user and briefly offer ski resort advisory help.', architecture)) {
           if (event.contextId) {
             setContextId(event.contextId);
           }
@@ -60,7 +65,7 @@ export default function ChatPanel() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [architecture]);
 
   function handleNewConversation() {
     setMessages([]);
@@ -75,7 +80,7 @@ export default function ChatPanel() {
       setMessages([{ role: 'agent', text: '', source: 'chat' }]);
       accRef.current = '';
       try {
-        for await (const event of sendMessageStream('Greet the user and briefly offer ski resort advisory help.', undefined)) {
+        for await (const event of sendMessageStream('Greet the user and briefly offer ski resort advisory help.', architecture)) {
           if (event.contextId) {
             setContextId(event.contextId);
           }
@@ -161,7 +166,7 @@ export default function ChatPanel() {
     setMessages((prev) => [...prev, { role: 'agent', text: '', source: 'chat' }]);
 
     try {
-      for await (const event of sendMessageStream(text, contextId)) {
+      for await (const event of sendMessageStream(text, architecture, contextId)) {
         if (event.contextId) {
           setContextId(event.contextId);
         }
@@ -209,12 +214,30 @@ export default function ChatPanel() {
           🤖 AI Advisor
         </h2>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <select
+            value={architecture}
+            onChange={(event) => {
+              setArchitecture(event.target.value as AdvisorArchitecture);
+              setMessages([]);
+              setContextId(undefined);
+              initRef.current = false;
+              resetClient();
+            }}
+            disabled={loading}
+            className="rounded-lg bg-slate-700 px-2 py-1.5 text-xs text-slate-200"
+            aria-label="Advisor architecture"
+          >
+            <option value="a2a">A2A agents</option>
+            <option value="skill">MCP skills</option>
+          </select>
           <VoiceButton
+            key={architecture}
             onTranscript={handleVoiceTranscript}
             onConversationId={setContextId}
             onClearAudio={handleClearAudio}
             disabled={loading}
             conversationId={contextId}
+            architecture={architecture}
           />
           <button
             onClick={handleNewConversation}

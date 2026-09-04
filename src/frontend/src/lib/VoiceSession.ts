@@ -1,3 +1,5 @@
+import type { AdvisorArchitecture } from './responses-client';
+
 export interface VoiceTranscript {
     role: 'user' | 'assistant';
     text: string;
@@ -65,6 +67,7 @@ export class VoiceSession {
     private sourceNode: MediaStreamAudioSourceNode | null = null;
     private callbacks: VoiceSessionCallbacks;
     private _status: VoiceStatus = 'disconnected';
+    private readyTimeout: number | null = null;
 
     // Playback
     private playbackContext: AudioContext | null = null;
@@ -72,10 +75,16 @@ export class VoiceSession {
     private scheduledSources: AudioBufferSourceNode[] = [];
 
     private conversationId?: string;
+    private architecture: AdvisorArchitecture;
 
-    constructor(callbacks: VoiceSessionCallbacks, conversationId?: string) {
+    constructor(
+        callbacks: VoiceSessionCallbacks,
+        conversationId?: string,
+        architecture: AdvisorArchitecture = 'a2a',
+    ) {
         this.callbacks = callbacks;
         this.conversationId = conversationId;
+        this.architecture = architecture;
     }
 
     get status(): VoiceStatus {
@@ -92,21 +101,36 @@ export class VoiceSession {
 
         try {
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = `${wsProtocol}//${window.location.host}/ws/voice`;
+            let wsUrl = `${wsProtocol}//${window.location.host}/ws/voice/${this.architecture}`;
             if (this.conversationId) {
                 wsUrl += `?conversationId=${encodeURIComponent(this.conversationId)}`;
             }
             this.ws = new WebSocket(wsUrl);
 
             await new Promise<void>((resolve, reject) => {
-                this.ws!.onopen = () => resolve();
-                this.ws!.onerror = () => reject(new Error('WebSocket connection failed'));
-                setTimeout(() => reject(new Error('WebSocket connection timeout')), 10000);
+                const openTimeout = window.setTimeout(
+                    () => reject(new Error('WebSocket connection timeout')),
+                    10000,
+                );
+                this.ws!.onopen = () => {
+                    window.clearTimeout(openTimeout);
+                    resolve();
+                };
+                this.ws!.onerror = () => {
+                    window.clearTimeout(openTimeout);
+                    reject(new Error('WebSocket connection failed'));
+                };
             });
 
             this.ws.onmessage = (event) => this.handleServerMessage(event.data);
             this.ws.onclose = () => this.handleDisconnect();
             this.ws.onerror = () => this.callbacks.onError('WebSocket error');
+            this.readyTimeout = window.setTimeout(() => {
+                if (this._status === 'connecting') {
+                    this.callbacks.onError('Voice service did not become ready in time');
+                    void this.stop();
+                }
+            }, 35000);
 
             await this.startAudioCapture();
 
@@ -120,6 +144,11 @@ export class VoiceSession {
     }
 
     async stop(): Promise<void> {
+        if (this.readyTimeout !== null) {
+            window.clearTimeout(this.readyTimeout);
+            this.readyTimeout = null;
+        }
+
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: 'stop' }));
             this.ws.close();
@@ -184,6 +213,10 @@ export class VoiceSession {
 
             switch (msg.type) {
                 case 'ready':
+                    if (this.readyTimeout !== null) {
+                        window.clearTimeout(this.readyTimeout);
+                        this.readyTimeout = null;
+                    }
                     this.setStatus('ready');
                     if (msg.conversationId) {
                         this.callbacks.onConversationId?.(msg.conversationId);
@@ -213,6 +246,7 @@ export class VoiceSession {
 
                 case 'error':
                     this.callbacks.onError(msg.message);
+                    void this.stop();
                     break;
             }
         } catch (error) {

@@ -125,8 +125,8 @@ Voice tools should be registered with stable snake_case names because those name
 ```csharp
 var agents = new Dictionary<string, AIAgent>
 {
-    ["weather_agent"] = ResolveA2AAgent("services__weatheragent-python__https__0"),
-    ["lift_traffic_agent"] = ResolveA2AAgent("services__lifttrafficagent-dotnet__https__0", "/agenta2a/v1/card"),
+    ["weather_agent"] = ResolveA2AAgent("services__weatheragenta2a__https__0"),
+    ["lift_traffic_agent"] = ResolveA2AAgent("services__lifttrafficagenta2a__https__0", "/agenta2a/v1/card"),
 };
 ```
 
