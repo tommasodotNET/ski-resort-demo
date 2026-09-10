@@ -9,9 +9,10 @@ namespace SafetySkill.Dotnet.Services;
 /// <remarks>
 /// This is a faithful .NET port of <c>safety-agent-a2a</c>'s <c>SafetyService</c>
 /// (<c>services/safety_service.py</c>): same data-generator endpoints (<c>/api/weather</c>, <c>/api/safety</c>,
-/// <c>/api/slopes</c>), same fallback values on failure, and the same risk-scoring rule engine
+/// <c>/api/slopes</c>) and the same risk-scoring rule engine
 /// (<see cref="CalculateRiskScore"/>, <see cref="GetRiskLevel"/>) and difficulty-based safety thresholds. The
 /// existing Python A2A agent is left untouched; this service backs a new, additive MCP skill-provider server.
+/// Upstream errors, malformed responses, and cancellation propagate to the MCP tool caller.
 /// </remarks>
 public class SafetyDataService
 {
@@ -45,64 +46,73 @@ public class SafetyDataService
         return httpClient;
     }
 
-    private async Task<JsonObject> FetchWeatherAsync()
+    private async Task<JsonObject> FetchWeatherAsync(CancellationToken cancellationToken)
     {
         try
         {
             var httpClient = CreateDataGeneratorClient();
-            var response = await httpClient.GetAsync("/api/weather");
+            using var response = await httpClient.GetAsync("/api/weather", cancellationToken);
             response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            return JsonNode.Parse(content) as JsonObject ?? new JsonObject();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var weather = JsonNode.Parse(content) as JsonObject
+                ?? throw new JsonException("Expected a weather object.");
+            foreach (var field in new[] { "temperature", "wind_speed", "snow_intensity", "visibility" })
+                _ = (weather[field] ?? throw new JsonException($"Missing weather field: {field}.")).GetValue<double>();
+            return weather;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching weather data");
-            return new JsonObject
-            {
-                ["temperature"] = 0,
-                ["wind_speed"] = 0,
-                ["snow_intensity"] = 0,
-                ["visibility"] = 5000
-            };
+            throw;
         }
     }
 
-    private async Task<JsonObject> FetchSafetyAsync()
+    private async Task<JsonObject> FetchSafetyAsync(CancellationToken cancellationToken)
     {
         try
         {
             var httpClient = CreateDataGeneratorClient();
-            var response = await httpClient.GetAsync("/api/safety");
+            using var response = await httpClient.GetAsync("/api/safety", cancellationToken);
             response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            return JsonNode.Parse(content) as JsonObject ?? new JsonObject();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var safety = JsonNode.Parse(content) as JsonObject
+                ?? throw new JsonException("Expected a safety object.");
+            _ = (safety["avalanche_risk_index"] ?? throw new JsonException("Missing avalanche risk index.")).GetValue<double>();
+            if (safety["incident_reports"] is not JsonArray)
+                throw new JsonException("Expected incident reports array.");
+            return safety;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching safety data");
-            return new JsonObject
-            {
-                ["avalanche_risk_index"] = 0.0,
-                ["incident_reports"] = new JsonArray()
-            };
+            throw;
         }
     }
 
-    private async Task<JsonArray> FetchSlopesAsync()
+    private async Task<JsonArray> FetchSlopesAsync(CancellationToken cancellationToken)
     {
         try
         {
             var httpClient = CreateDataGeneratorClient();
-            var response = await httpClient.GetAsync("/api/slopes");
+            using var response = await httpClient.GetAsync("/api/slopes", cancellationToken);
             response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            return JsonNode.Parse(content) as JsonArray ?? new JsonArray();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var slopes = JsonNode.Parse(content) as JsonArray
+                ?? throw new JsonException("Expected a slopes array.");
+            foreach (var slope in slopes)
+            {
+                if (slope is not JsonObject item)
+                    throw new JsonException("Expected a slope object.");
+                foreach (var field in new[] { "slope_id", "name", "difficulty" })
+                    _ = (item[field] ?? throw new JsonException($"Missing slope field: {field}.")).GetValue<string>();
+                _ = (item["is_open"] ?? throw new JsonException("Missing slope is_open flag.")).GetValue<bool>();
+            }
+            return slopes;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching slopes data");
-            return new JsonArray();
+            throw;
         }
     }
 
@@ -179,13 +189,13 @@ public class SafetyDataService
     }
 
     /// <summary>Evaluates risk for a specific area or resort-wide. Mirrors <c>SafetyService.evaluate_risk</c>.</summary>
-    public async Task<string> EvaluateRiskAsync(string area)
+    public async Task<string> EvaluateRiskAsync(string area, CancellationToken cancellationToken = default)
     {
         try
         {
-            var weather = await FetchWeatherAsync();
-            var safety = await FetchSafetyAsync();
-            var slopes = await FetchSlopesAsync();
+            var weather = await FetchWeatherAsync(cancellationToken);
+            var safety = await FetchSafetyAsync(cancellationToken);
+            var slopes = await FetchSlopesAsync(cancellationToken);
 
             var (riskScore, factors) = CalculateRiskScore(weather, safety);
             var riskLevel = GetRiskLevel(riskScore);
@@ -223,28 +233,21 @@ public class SafetyDataService
 
             return result.ToJsonString(SerializerOptions);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error evaluating risk");
-            return new JsonObject
-            {
-                ["area"] = area,
-                ["risk_level"] = "unknown",
-                ["risk_score"] = 0.0,
-                ["factors"] = new JsonArray($"Error: {ex.Message}"),
-                ["affected_slopes"] = new JsonArray()
-            }.ToJsonString(SerializerOptions);
+            throw;
         }
     }
 
     /// <summary>Checks if a specific slope is safe to ski on. Mirrors <c>SafetyService.is_slope_safe</c>.</summary>
-    public async Task<string> IsSlopeSafeAsync(string slopeId)
+    public async Task<string> IsSlopeSafeAsync(string slopeId, CancellationToken cancellationToken = default)
     {
         try
         {
-            var weather = await FetchWeatherAsync();
-            var safety = await FetchSafetyAsync();
-            var slopes = await FetchSlopesAsync();
+            var weather = await FetchWeatherAsync(cancellationToken);
+            var safety = await FetchSafetyAsync(cancellationToken);
+            var slopes = await FetchSlopesAsync(cancellationToken);
 
             var slope = slopes.FirstOrDefault(s => s?["slope_id"]?.GetValue<string>() == slopeId) as JsonObject;
 
@@ -295,25 +298,19 @@ public class SafetyDataService
 
             return result.ToJsonString(SerializerOptions);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error checking slope safety");
-            return new JsonObject
-            {
-                ["slope_id"] = slopeId,
-                ["is_safe"] = false,
-                ["risk_score"] = 1.0,
-                ["reasons"] = new JsonArray($"Error: {ex.Message}")
-            }.ToJsonString(SerializerOptions);
+            throw;
         }
     }
 
     /// <summary>Lists all currently closed slopes. Mirrors <c>SafetyService.get_closed_slopes</c>.</summary>
-    public async Task<string> GetClosedSlopesAsync()
+    public async Task<string> GetClosedSlopesAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var slopes = await FetchSlopesAsync();
+            var slopes = await FetchSlopesAsync(cancellationToken);
 
             var closedSlopes = new JsonArray();
             var total = 0;
@@ -340,15 +337,10 @@ public class SafetyDataService
                 ["total_closed"] = total
             }.ToJsonString(SerializerOptions);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error getting closed slopes");
-            return new JsonObject
-            {
-                ["closed_slopes"] = new JsonArray(),
-                ["total_closed"] = 0,
-                ["error"] = ex.Message
-            }.ToJsonString(SerializerOptions);
+            throw;
         }
     }
 }

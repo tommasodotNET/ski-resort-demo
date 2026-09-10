@@ -1,8 +1,8 @@
 """Shared `agent_framework.Agent` construction for the Skills Orchestrator.
 
 Both hosting surfaces this project exposes build the *same* underlying agent --
-MCP-discovered Agent Skills and resources for weather/safety/ski-coach/lift-
-traffic, the Foundry ski researcher prompt agent as the only direct tool, and
+Native MCP-discovered Agent Skills and progressive tools for weather/safety/
+ski-coach/lift-traffic, the Foundry ski researcher as a static direct tool, and
 (when configured) a Cosmos DB-backed `CosmosHistoryProvider` for durable
 conversation history. Only the surrounding transport/host differs:
 
@@ -22,16 +22,13 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent_framework import (
     AggregatingSkillsSource,
-    FunctionTool,
     MCPSkillsSource,
-    Skill,
     SkillsProvider,
     ToolApprovalMiddleware,
 )
@@ -53,49 +50,19 @@ from .config import (
     get_foundry_config,
     resolve_skill_provider_url,
 )
+from .native_mcp import NativeMCPToolsMiddleware, SkillConnection
 
 logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """You are the AlpineAI Skills Orchestrator, the main ski resort advisor.
 Use `ski_researcher_agent` for general skiing questions that need web-backed research.
-Never invent operational resort data. Answer concisely and concretely, and prioritize safety."""
-
-class ResourceOnlySkillsProvider(SkillsProvider):
-    """Expose only the framework's skill-loading and resource-reading tools.
-
-    The remote specialists publish live operations as MCP resources. Filter the
-    base provider's generated tools and instructions to this orchestrator's
-    resource-only contract. The standard framework prompt remains the source of
-    skill discovery and resource guidance; only its inapplicable script paragraph
-    is removed.
-    """
-
-    @staticmethod
-    def _create_instructions(
-        prompt_template: str | None,
-        skills: Sequence[Skill],
-    ) -> str | None:
-        instructions = SkillsProvider._create_instructions(prompt_template, skills)
-        if instructions is None:
-            return None
-
-        non_read_only_names = SkillsProvider._ALL_TOOL_NAMES - SkillsProvider._READ_ONLY_TOOL_NAMES
-        for tool_name in non_read_only_names:
-            script_section_start = instructions.find(f"- Use `{tool_name}`")
-            if script_section_start < 0:
-                continue
-            script_section_end = instructions.find("\n\n", script_section_start)
-            if script_section_end < 0:
-                return instructions[:script_section_start].rstrip()
-            instructions = instructions[:script_section_start] + instructions[script_section_end + 1 :]
-        return instructions
-
-    def _create_tools(self, skills: Sequence[Skill]) -> list[FunctionTool]:
-        allowed_names = {
-            self.LOAD_SKILL_TOOL_NAME,
-            self.READ_SKILL_RESOURCE_TOOL_NAME,
-        }
-        return [tool for tool in super()._create_tools(skills) if tool.name in allowed_names]
+Never invent operational resort data. Answer concisely and concretely, and prioritize safety.
+Load the relevant skill's canonical instructions with load_skill, then use the named
+provider_load_tool described there. Call the newly exposed direct MCP operation on the
+next iteration. Prefer named loading instead of listing the entire MCP catalog.
+Resource reads are for skill documentation only, never operational data.
+Each new turn starts with native loaders again; reload needed tools on followups.
+Loading is progressive disclosure, not authorization."""
 
 
 @dataclass
@@ -139,17 +106,17 @@ async def _connect_skill_provider(url: str, exit_stack: AsyncExitStack) -> Clien
 async def _discover_providers(
     providers: tuple[SkillProviderConfig, ...],
     exit_stack: AsyncExitStack,
-) -> tuple[list[MCPSkillsSource], list[str], list[str]]:
-    """Connect to every configured provider and build its MCP skills source.
+) -> tuple[list[SkillConnection], list[str], list[str]]:
+    """Connect to every configured provider for native skills and tools.
 
     Returns:
-        A tuple of ``(skills_sources, connected_providers, skipped_providers)``
-        for every provider that was successfully connected. Each source receives
-        the one long-lived MCP client session for its provider. Unconfigured or
+        A tuple of ``(connections, connected_providers, skipped_providers)``
+        for every provider that was successfully connected. Native skills and
+        per-run native tool instances share the host-owned session. Unconfigured or
         unreachable providers are recorded in `skipped_providers` and otherwise
         skipped.
     """
-    skills_sources: list[MCPSkillsSource] = []
+    connections: list[SkillConnection] = []
     connected_providers: list[str] = []
     skipped_providers: list[str] = []
 
@@ -175,11 +142,11 @@ async def _discover_providers(
             skipped_providers.append(provider.key)
             continue
 
-        skills_sources.append(MCPSkillsSource(client=session))
+        connections.append(SkillConnection(provider, url, session))
         connected_providers.append(provider.key)
         logger.info("Connected MCP Agent Skills provider '%s' at %s", provider.key, url)
 
-    return skills_sources, connected_providers, skipped_providers
+    return connections, connected_providers, skipped_providers
 
 
 async def _build_history_provider(exit_stack: AsyncExitStack) -> tuple[CosmosHistoryProvider | None, str]:
@@ -261,21 +228,25 @@ async def build_orchestrator_agent(
     if exit_stack is None:
         raise ValueError("exit_stack is required")
 
-    skills_sources, connected_providers, skipped_providers = await _discover_providers(providers, exit_stack)
+    if len({p.key for p in providers}) != len(providers):
+        raise ValueError("Duplicate configured skill provider keys")
+    connections, connected_providers, skipped_providers = await _discover_providers(providers, exit_stack)
 
     skills_provider: SkillsProvider | None = None
     context_providers: list[Any] = []
     middleware: list[Any] = []
-    if skills_sources:
+    if connections:
+        skills_sources = [MCPSkillsSource(client=connection.session) for connection in connections]
         source = skills_sources[0] if len(skills_sources) == 1 else AggregatingSkillsSource(skills_sources)
-        skills_provider = ResourceOnlySkillsProvider(source)
+        skills_provider = SkillsProvider(source)
         context_providers.append(skills_provider)
         # The connected providers are trusted application resources, so their
         # read-only skill operations may run unattended behind either host.
         middleware = [
             ToolApprovalMiddleware(
                 auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule]
-            )
+            ),
+            NativeMCPToolsMiddleware(connections),
         ]
     else:
         logger.warning("No skill providers connected; agent will run with no discoverable skills.")

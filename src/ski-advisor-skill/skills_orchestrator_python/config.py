@@ -3,8 +3,8 @@
 Resolves, for each skill-backed specialist domain (weather, safety, ski-coach,
 lift-traffic), the streamable-HTTP MCP endpoint of a
 *skill-provider* resource that publishes SEP-2640 Agent Skills
-(``skill://index.json`` + ``skill://<name>/SKILL.md``) and live sibling
-resources read through those skills.
+(``skill://index.json`` + ``skill://<name>/SKILL.md``). Native progressive MCP
+tools provide live operations; resources contain instruction documents only.
 
 All four skill-provider implementations are owned and built in .NET (this
 project never implements a skill-provider server itself, only the MCP
@@ -71,6 +71,9 @@ class SkillProviderConfig:
     default_path: str = DEFAULT_MCP_PATH
     """Default URL path appended to the Aspire-discovered base URL."""
 
+    allowed_tools: tuple[str, ...] = ()
+    """Native MCP allow-list of trusted read-only operations for this provider."""
+
     @property
     def url_env_var(self) -> str:
         """Environment variable name for an explicit, full MCP endpoint URL override."""
@@ -86,10 +89,23 @@ class SkillProviderConfig:
 #: Each provider has a dedicated compact ``*skills`` Aspire resource paired
 #: with the corresponding compact ``*agenta2a`` resource.
 DEFAULT_SKILL_PROVIDERS: tuple[SkillProviderConfig, ...] = (
-    SkillProviderConfig(key="weather", resource_name="weatherskills"),
-    SkillProviderConfig(key="safety", resource_name="safetyskills"),
-    SkillProviderConfig(key="skicoach", resource_name="skicoachskills"),
-    SkillProviderConfig(key="lifttraffic", resource_name="lifttrafficskills"),
+    SkillProviderConfig(
+        key="weather", resource_name="weatherskills",
+        allowed_tools=("weather_current_conditions", "weather_forecast", "weather_storm_status"),
+    ),
+    SkillProviderConfig(
+        key="safety", resource_name="safetyskills",
+        allowed_tools=("safety_risk", "safety_slope_safety", "safety_closed_slopes"),
+    ),
+    SkillProviderConfig(
+        key="skicoach", resource_name="skicoachskills",
+        allowed_tools=("ski_coach_recommendations", "ski_coach_day_plan"),
+    ),
+    SkillProviderConfig(
+        key="lifttraffic", resource_name="lifttrafficskills",
+        allowed_tools=("lift_traffic_lifts", "lift_traffic_lift_status",
+                       "lift_traffic_wait_times", "lift_traffic_least_busy_area"),
+    ),
 )
 
 

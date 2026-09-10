@@ -20,6 +20,7 @@ public sealed record SlopeMetadata(
 /// (<c>services/coach_service.py</c>): same <c>SLOPE_METADATA</c> table, same skill-to-difficulty mapping, same
 /// <see cref="ScoreSlope"/> rule engine, and the same <c>recommend_slope</c> / <c>build_day_plan</c> algorithms.
 /// The existing Python A2A agent is left untouched; this service backs a new, additive MCP skill-provider server.
+/// Upstream errors, malformed state, and cancellation propagate without wrapping to the MCP tool caller.
 /// </remarks>
 /// <remarks>
 /// <b>Known pre-existing field-name mismatch, preserved as-is:</b> <c>coach_service.py</c>'s scoring/output logic
@@ -88,20 +89,27 @@ public class CoachDataService
     /// <c>CoachService._fetch_current_state</c>: on failure, throws instead of returning fallback data
     /// (the Python service does not catch this internally either — it re-raises).
     /// </summary>
-    private async Task<JsonObject> FetchCurrentStateAsync()
+    private async Task<JsonObject> FetchCurrentStateAsync(CancellationToken cancellationToken)
     {
         try
         {
             var httpClient = CreateDataGeneratorClient();
-            var response = await httpClient.GetAsync("/api/current-state");
+            using var response = await httpClient.GetAsync("/api/current-state", cancellationToken);
             response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            return JsonNode.Parse(content) as JsonObject ?? new JsonObject();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var state = JsonNode.Parse(content) as JsonObject
+                ?? throw new JsonException("Expected a resort state object.");
+            if (state["weather"] is not JsonObject || state["safety"] is not JsonObject
+                || state["slopes"] is not JsonArray || state["lifts"] is not JsonArray)
+            {
+                throw new JsonException("Resort state must contain weather, safety, slopes, and lifts.");
+            }
+            return state;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching resort state");
-            throw new InvalidOperationException($"Failed to fetch resort state: {ex.Message}", ex);
+            throw;
         }
     }
 
@@ -274,7 +282,7 @@ public class CoachDataService
     /// Recommends up to 3 slopes based on skill level and preferences. Mirrors
     /// <c>CoachService.recommend_slope</c> exactly.
     /// </summary>
-    public async Task<string> RecommendSlopeAsync(string skillLevel, string? preferences)
+    public async Task<string> RecommendSlopeAsync(string skillLevel, string? preferences, CancellationToken cancellationToken = default)
     {
         skillLevel = skillLevel.ToLowerInvariant();
         if (!SkillToDifficulty.TryGetValue(skillLevel, out var suitableDifficulties))
@@ -285,7 +293,7 @@ public class CoachDataService
 
         var prefs = ParsePreferences(preferences);
 
-        var state = await FetchCurrentStateAsync();
+        var state = await FetchCurrentStateAsync(cancellationToken);
         var slopes = state["slopes"] as JsonArray ?? new JsonArray();
         var weather = state["weather"] as JsonObject ?? new JsonObject();
         var lifts = state["lifts"] as JsonArray ?? new JsonArray();
@@ -368,7 +376,7 @@ public class CoachDataService
     }
 
     /// <summary>Builds a full day ski plan based on skill level. Mirrors <c>CoachService.build_day_plan</c> exactly.</summary>
-    public async Task<string> BuildDayPlanAsync(string skillLevel)
+    public async Task<string> BuildDayPlanAsync(string skillLevel, CancellationToken cancellationToken = default)
     {
         skillLevel = skillLevel.ToLowerInvariant();
         if (!SkillToDifficulty.TryGetValue(skillLevel, out var suitableDifficulties))
@@ -377,7 +385,7 @@ public class CoachDataService
                 $"Invalid skill level: {skillLevel}. Must be one of: beginner, intermediate, advanced, expert");
         }
 
-        var state = await FetchCurrentStateAsync();
+        var state = await FetchCurrentStateAsync(cancellationToken);
         var slopes = state["slopes"] as JsonArray ?? new JsonArray();
         var weather = state["weather"] as JsonObject ?? new JsonObject();
         var lifts = state["lifts"] as JsonArray ?? new JsonArray();

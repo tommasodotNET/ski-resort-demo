@@ -7,10 +7,11 @@ namespace LiftTrafficSkill.Dotnet.Services;
 /// </summary>
 /// <remarks>
 /// This is a faithful .NET port of the lift-data logic already used by <c>lift-traffic-agent-a2a</c>'s
-/// <c>LiftDataService</c> (same data-generator endpoints, same fallback/error shapes). That existing A2A agent
+/// <c>LiftDataService</c> (same data-generator endpoints and recommendation rules). That existing A2A agent
 /// (Aspire resource <c>lifttrafficagenta2a</c>) is left untouched; this is a separate, standalone MCP
 /// skill-provider server (Aspire resource <c>lifttrafficskills</c>) — a dedicated project, not the same
 /// binary as the A2A resource, mirroring the pattern already used for weather/safety/ski-coach/ski-researcher.
+/// Upstream errors and cancellation propagate to the MCP tool caller.
 /// </remarks>
 public class LiftDataService
 {
@@ -36,7 +37,7 @@ public class LiftDataService
         return httpClient;
     }
 
-    public async Task<string> GetAllLiftsAsync()
+    public async Task<string> GetAllLiftsAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -44,22 +45,22 @@ public class LiftDataService
 
             _logger.LogInformation("Fetching all lifts from {Url}/api/lifts", _dataGeneratorUrl);
 
-            var response = await httpClient.GetAsync("/api/lifts");
+            using var response = await httpClient.GetAsync("/api/lifts", cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("Retrieved lift data: {Content}", content);
 
             return content;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching all lifts data");
-            return JsonSerializer.Serialize(new { error = ex.Message });
+            throw;
         }
     }
 
-    public async Task<string> GetLiftByIdAsync(string liftId)
+    public async Task<string> GetLiftByIdAsync(string liftId, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -67,22 +68,22 @@ public class LiftDataService
 
             _logger.LogInformation("Fetching lift {LiftId} from {Url}/api/lifts/{LiftId}", liftId, _dataGeneratorUrl, liftId);
 
-            var response = await httpClient.GetAsync($"/api/lifts/{liftId}");
+            using var response = await httpClient.GetAsync($"/api/lifts/{Uri.EscapeDataString(liftId)}", cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("Retrieved lift data for {LiftId}: {Content}", liftId, content);
 
             return content;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching lift {LiftId} data", liftId);
-            return JsonSerializer.Serialize(new { error = ex.Message, liftId });
+            throw;
         }
     }
 
-    public async Task<string> SuggestLessBusyAreaAsync()
+    public async Task<string> SuggestLessBusyAreaAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -90,10 +91,10 @@ public class LiftDataService
 
             _logger.LogInformation("Fetching all lifts to determine least busy area");
 
-            var response = await httpClient.GetAsync("/api/lifts");
+            using var response = await httpClient.GetAsync("/api/lifts", cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             var lifts = JsonSerializer.Deserialize<JsonElement>(content);
 
             // Find the open lift with the shortest wait time
@@ -137,10 +138,10 @@ public class LiftDataService
 
             return JsonSerializer.Serialize(recommendation);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error suggesting less busy area");
-            return JsonSerializer.Serialize(new { error = ex.Message });
+            throw;
         }
     }
 }
