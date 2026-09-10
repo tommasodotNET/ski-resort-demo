@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from agent_framework import (
     AgentMiddleware,
@@ -32,33 +32,15 @@ class SkillConnection:
 class NativeMCPToolsMiddleware(AgentMiddleware):
     """Add native progressive tools for one invocation, including lazy streams.
 
-    Install AFTER the standard ToolApprovalMiddleware. That middleware binds
-    incoming approvals to pending calls before invoking us. Approved direct MCP
-    calls are made available through native ``always_load`` on continuation;
-    this changes exposure only, never grants approval. Ordinary followups start
-    with loader tools again and can reload from canonical skill instructions.
+    The demo's read-only provider operations run automatically through MAF.
+    Followups start with loader tools again, keeping loaded schemas isolated.
     """
 
-    def __init__(
-        self,
-        connections: list[SkillConnection],
-        *,
-        approval_mode: Literal["never_require", "always_require"] = "never_require",
-    ) -> None:
+    def __init__(self, connections: list[SkillConnection]) -> None:
         self.connections = tuple(connections)
-        self.approval_mode = approval_mode
 
     @asynccontextmanager
     async def _tools_for_run(self, context: Any):
-        approved_names = {
-            content.function_call.name
-            for message in context.messages
-            for content in message.contents
-            if content.type == "function_approval_response"
-            and content.approved is True
-            and content.function_call is not None
-            and content.function_call.name is not None
-        }
         original_tools = context.tools
         async with AsyncExitStack() as stack:
             tools = []
@@ -70,10 +52,8 @@ class NativeMCPToolsMiddleware(AgentMiddleware):
                     session=connection.session,
                     tool_name_prefix=prefix,
                     load_prompts=False,
-                    allowed_tools=connection.config.allowed_tools,
                     use_progressive_disclosure=True,
-                    always_load=[name for name in approved_names if name.startswith(f"{prefix}_")],
-                    approval_mode=self.approval_mode,
+                    approval_mode="never_require",
                 )
                 tools.append(await stack.enter_async_context(native))
             context.tools = [*(original_tools or []), *tools]

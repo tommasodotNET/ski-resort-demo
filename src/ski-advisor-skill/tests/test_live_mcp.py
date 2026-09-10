@@ -36,6 +36,14 @@ PROVIDERS = (
     ("ski-coach", "ski-coach-skills", "SkiCoachSkill.Dotnet"),
     ("lift-traffic", "lift-traffic-skills", "LiftTrafficSkill.Dotnet"),
 )
+# Test-only provider contract: catalogs drive execution; this catches missing coverage.
+EXPECTED_OPERATIONS = {
+    "weather": {"weather_current_conditions", "weather_forecast", "weather_storm_status"},
+    "safety": {"safety_risk", "safety_slope_safety", "safety_closed_slopes"},
+    "skicoach": {"ski_coach_recommendations", "ski_coach_day_plan"},
+    "lifttraffic": {"lift_traffic_lifts", "lift_traffic_lift_status",
+                    "lift_traffic_wait_times", "lift_traffic_least_busy_area"},
+}
 WEATHER = {
     "temperature": -5.0, "wind_speed": 15.0, "snow_intensity": 1,
     "visibility": 5000, "timestamp": "2026-09-10T08:00:00Z",
@@ -140,7 +148,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_four_native_skill_loader_direct_calls_and_errors(self):
         async with AsyncExitStack() as stack:
-            sessions, connections = {}, []
+            sessions, connections, catalogs = {}, [], {}
             for config, (skill, _, _) in zip(DEFAULT_SKILL_PROVIDERS, PROVIDERS, strict=True):
                 endpoint = self.endpoints[skill]
                 read, write, _ = await stack.enter_async_context(streamable_http_client(endpoint))
@@ -150,6 +158,16 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
                 session.call_tool = AsyncMock(wraps=session.call_tool)
                 sessions[skill] = session
                 connections.append(SkillConnection(config, endpoint, session))
+                tools = {}
+                cursor = None
+                while True:
+                    page = await session.list_tools(cursor=cursor)
+                    tools.update((tool.name, tool) for tool in page.tools)
+                    cursor = page.nextCursor
+                    if not cursor:
+                        break
+                self.assertEqual(set(tools), EXPECTED_OPERATIONS[config.key])
+                catalogs[config.key] = tools
 
             sample_arguments = {
                 "hours": 2, "liftId": "chairlift-alpha", "slopeId": "valley-run",
@@ -166,9 +184,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
                                         for uri in resource_uris), resource_uris)
                     templates = await session.list_resource_templates()
                     self.assertEqual(templates.resourceTemplates, [])
-                    page = await session.list_tools()
-                    tools = {tool.name: tool for tool in page.tools}
-                    self.assertEqual(set(tools), set(connection.config.allowed_tools))
+                    tools = catalogs[connection.config.key]
                     canonical = await session.read_resource(AnyUrl(f"skill://{skill}/SKILL.md"))
                     instructions = "\n".join(content.text for content in canonical.contents)
                     self.assertIn(f"{connection.config.key}_load_tool", instructions)
@@ -176,9 +192,16 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
                     for name, tool in tools.items():
                         args = {key: sample_arguments[key] for key in tool.inputSchema.get("properties", {})
                                 if key in sample_arguments}
-                        await self._assert_native_loop(connections, sessions, skill, connection, name, args, tool)
+                        await self._assert_native_loop(
+                            connections, sessions, catalogs, skill, connection, name, args, tool,
+                        )
                         tested_calls.append((skill, name, args))
 
+            self.assertEqual(len(tested_calls), 12)
+            self.assertEqual(
+                {name for _, name, _ in tested_calls},
+                set().union(*EXPECTED_OPERATIONS.values()),
+            )
             # No legacy operational resources: provider errors remain errors.
             DataHandler.failing = True
             try:
@@ -190,7 +213,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await sessions["weather"].call_tool("weather_forecast", {"hours": 0})).isError)
             self.assertTrue((await sessions["ski-coach"].call_tool("ski_coach_day_plan", {"skillLevel": 1})).isError)
 
-    async def _assert_native_loop(self, connections, sessions, skill, connection, name, args, schema):
+    async def _assert_native_loop(self, connections, sessions, catalogs, skill, connection, name, args, schema):
         prefix = connection.config.key
         full_name = f"{prefix}_{name}"
         for session in sessions.values():
@@ -200,9 +223,12 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
         def initial(messages, options):
             text = json.dumps([message.to_dict() for message in messages]) + str(options.get("instructions"))
             names = {tool.name for tool in options["tools"]}
+            tool_context = json.dumps([tool.to_dict() for tool in options["tools"]])
             for remote in connections:
-                for operation in remote.config.allowed_tools:
+                for operation, advertised in catalogs[remote.config.key].items():
                     self.assertNotIn(operation, text)
+                    self.assertNotIn(operation, tool_context)
+                    self.assertNotIn(json.dumps(advertised.inputSchema), tool_context)
                     self.assertNotIn(f"{remote.config.key}_{operation}", names)
             return call("load_skill", {"skill_name": skill})
 
@@ -216,7 +242,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(full_name, exposed)
             self.assertEqual(exposed[full_name].parameters(), schema.inputSchema)
             for remote in connections:
-                for operation in remote.config.allowed_tools:
+                for operation in catalogs[remote.config.key]:
                     other = f"{remote.config.key}_{operation}"
                     if other != full_name:
                         self.assertNotIn(other, exposed)
@@ -231,6 +257,8 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
         agent, _ = make_agent(connections, [initial, skill_loaded, tool_loaded, done])
         response = await agent.run("ski advice", session=agent.create_session())
         self.assertEqual(response.text, "live native result")
+        self.assertFalse(any(c.type == "function_approval_request"
+                             for m in response.messages for c in m.contents))
         for key, session in sessions.items():
             reads = [str(args.args[0]) for args in session.read_resource.await_args_list]
             self.assertTrue(all(uri == "skill://index.json" or uri == f"skill://{key}/SKILL.md"
