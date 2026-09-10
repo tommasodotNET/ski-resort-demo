@@ -18,7 +18,7 @@ To explore that distinction, the demo now has a second path: **distributed Agent
 
 The resort has only four skills and twelve tools. It is a simple setting for illustrating a problem that becomes more interesting with a large catalog: how to give the model the right procedures and tool schemas without placing everything in its initial context.
 
-**For a genuinely small catalog, start simpler:** register the configured providers' MCP tools upfront using the standard SDK. You can still load skill instructions on demand. Progressive tool loading is optional, and the request-lifetime middleware discussed below is unnecessary in that eager-loading setup.
+**For a genuinely small catalog, start simpler:** register the configured providers' MCP tools upfront using the standard SDK. You can still load skill instructions on demand. Progressive tool loading is optional, and the skill-to-provider registration hook discussed below is unnecessary in that eager-loading setup.
 
 The goal here is to explore the larger-catalog pattern, not to claim that twelve tools require it.
 
@@ -60,13 +60,13 @@ sequenceDiagram
     participant D as Resort data
     H->>P: Read skill index and list tools
     P-->>H: Skill metadata and tool schemas
-    H-->>O: Skill summaries and loading helpers
+    H-->>O: Skill summaries and skill-loading helpers
     U->>O: What is the weather like?
     O->>H: load_skill("weather")
     H->>P: resources/read SKILL.md
-    P-->>O: Instructions and relevant tool names, via host
-    O->>H: weather_load_tool("weather_current_conditions")
-    H-->>O: Register direct tool for next iteration
+    P-->>H: Weather instructions
+    Note over H: Successful load triggers add_tools for the weather catalog
+    H-->>O: Instructions and all weather tool descriptions/schemas next iteration
     O->>H: weather_weather_current_conditions()
     H->>P: tools/call weather_current_conditions
     P->>D: Read live data
@@ -77,7 +77,7 @@ sequenceDiagram
 
 There is no weather-agent model in the second path. There is still a weather service executing application code.
 
-This is not "MCP replaces A2A everywhere." It changes the reasoning boundary for bounded capabilities. Nor does "one agent" mean "one model call": instruction loading, tool loading, operation selection, and answer generation can require several iterations.
+This is not "MCP replaces A2A everywhere." It changes the reasoning boundary for bounded capabilities. Nor does "one agent" mean "one model call": skill selection, operation selection, and answer generation can require several iterations.
 
 ## What actually migrates?
 
@@ -187,7 +187,7 @@ description: Assess current resort weather, forecasts, and storm threats.
 
 These are domain tool names, not host-specific loading functions. A skill can also refer to supporting documentation using relative paths, without naming a particular SDK's resource-reading helper.
 
-The actual demo deliberately adds a separate MAF-specific loading section. For example, weather's generated document names `weather_load_tool` and lists the exact remote names alongside their registered callable names. That is integration guidance for this host, not a portable requirement of the skill format.
+The actual demo adds a separate host-specific section explaining that loading the skill makes its provider's tools available on the next model iteration. It lists their provider-prefixed callable names. That is integration guidance for this host, not a portable requirement of the skill format. The model chooses operations using the descriptions and schemas supplied by MCP, not just those names.
 
 ## 4. Host instructions and tools together
 
@@ -215,18 +215,21 @@ This shortened snippet omits ordinary domain-service and HTTP-client registratio
 
 ## 5. Compose native skills and progressive MCP tools
 
-The Python advisor uses the standard `SkillsProvider` and `MCPSkillsSource`:
+The Python advisor uses the standard `SkillsProvider` and `MCPSkillsSource`.
+`SkillToolsMiddleware` supplies the small integration hook. Its `source`
+aggregates native `CachingSkillsSource` wrappers around the configured MCP
+sources, so the provider and hook share the same cached skill objects:
 
 ```python
+skill_tools = SkillToolsMiddleware(connections)
 skills = SkillsProvider(
-    AggregatingSkillsSource([
-        MCPSkillsSource(client=connection.session)
-        for connection in connections
-    ])
+    skill_tools.source,
+    disable_load_skill_approval=True,
+    disable_read_skill_resource_approval=True,
 )
 ```
 
-For each provider, native `MCPStreamableHTTPTool` supplies progressive loading. These are the relevant weather settings; connection lifetime is handled separately:
+For each provider, native `MCPStreamableHTTPTool` discovers the catalog and builds callable functions. These are the relevant weather settings; the object is connected and retained host-side, not placed in the agent's initial tools:
 
 ```python
 weather_tools = MCPStreamableHTTPTool(
@@ -235,45 +238,49 @@ weather_tools = MCPStreamableHTTPTool(
     session=weather_session,
     tool_name_prefix="weather",
     load_prompts=False,
-    use_progressive_disclosure=True,
+    use_progressive_disclosure=False,
     approval_mode="never_require",
 )
 ```
 
-The configured providers' catalogs are the source of truth. There is no second tool-name list in the advisor: any tool they advertise can be loaded. The demo trusts these providers and uses `never_require` for their read-only operations; adding write operations would require revisiting approval policy. Endpoint configuration and provider prefixes keep routing explicit. The other prefixes are `safety`, `skicoach`, and `lifttraffic`.
+Here `False` disables the MCP wrapper's model-facing per-tool loading helpers. It does **not** expose all tools to the model: the host retains the native functions until the corresponding skill loads. Dynamic exposure uses the public `FunctionInvocationContext.add_tools(...)` API instead.
 
-### The association is model-mediated
+The configured providers' catalogs are the source of truth. There is no second tool-name list in the advisor. The demo trusts these providers and uses `never_require` for their read-only operations; adding write operations would require revisiting approval policy. Endpoint configuration and provider prefixes keep routing explicit. The other prefixes are `safety`, `skicoach`, and `lifttraffic`.
+
+### The model selects a skill; the host supplies its tool group
 
 There are two different kinds of discovery:
 
-1. Before the model runs, the host retrieves the configured providers' catalogs through paginated MCP `tools/list`. In this implementation, that happens when invocation-local native tool objects connect.
-2. The model initially receives skill metadata and native loading helpers, not all twelve operation schemas. Existing advisor instructions and the researcher tool are also present.
-3. Native `load_skill` reads the chosen `SKILL.md`. Its instructions list relevant exact tool names.
-4. The model chooses names and calls the native provider loader, such as `weather_load_tool({"tool":"weather_forecast"})`. The argument also accepts an array.
-5. MAF registers the selected function definitions for the **next model iteration** using its native function-invocation layer.
-6. The model directly invokes the registered tool, such as `weather_weather_forecast({"hours":6})`. MAF sends MCP `tools/call` using the original remote name, `weather_forecast`.
+1. Before the model runs, the host retrieves the configured providers' catalogs through paginated MCP `tools/list`, using app-owned connections and native tool objects.
+2. The model initially receives skill metadata and skill-loading helpers, not the twelve operation schemas. Existing advisor instructions and the researcher tool are also present.
+3. Native `load_skill` reads the chosen `SKILL.md`.
+4. After that read succeeds, the host's integration hook registers **all native functions from that skill's configured provider** for this run through `add_tools`.
+5. On the **next model iteration**, the advisor sees the instructions plus every tool description and parameter schema in the selected group. Loading weather exposes its three operations; the other providers remain hidden.
+6. The model chooses which operation to invoke, for example `weather_weather_forecast({"hours":6})`. MAF sends MCP `tools/call` using the original remote name, `weather_forecast`.
 
 The repeated `weather_` comes from adding the configured provider prefix to an already domain-prefixed remote name.
 
-There is no atomic "load skill and resolve its tool dependencies" operation. The model follows the instructions and makes a separate loading decision. It can also invoke a loader without first loading the skill. Skill selection is guidance, not authorization.
+Loading the group does not execute all its operations. It gives the model enough information to choose among them without first guessing from tool names. There is no separate model-issued per-tool loader call.
 
-Each provider additionally has native `list_mcp_tools` and `unload_tool` functions. Calling `list_mcp_tools` reveals the provider catalog, including parameter schemas. The skill names known operations so the model normally does not need that broader listing.
+This grouping follows the demo's one-skill-per-provider boundary. A provider containing several unrelated skills would need a more specific association. Skill content cannot redirect clients to another endpoint, and a failed skill load must not expose a tool group. Registration controls model context, not authorization.
 
-This is SDK-native progressive registration, not a custom operation dispatcher or a Foundry Toolbox. The sample uses Foundry's `gpt41` deployment, but the mechanism lives in MAF's function-calling integration, not a Foundry-only tool-search feature.
+MAF supplies progressive registration, not the skill-to-provider binding: that small association is our host integration, not automatic behavior built into `SkillsProvider`. There is no custom operation dispatcher or Foundry Toolbox. The sample uses Foundry's `gpt41` deployment, but the mechanism lives in MAF's function-calling integration, not a Foundry-only tool-search feature.
 
 ### The small amount of host glue
 
 Both skills-advisor hosting surfaces, Responses and A2A, use the same Python builder and keep a shared agent. MCP connections stay open for the application's lifetime. Python's `AsyncExitStack` is the cleanup manager that closes them on shutdown and cleans up failed connection setup.
 
-Connections and tool objects have different lifetimes. Native progressive MCP objects remember which tool names have been loaded. The demo supplies fresh objects per invocation so concurrent users do not share that mutable exposure state.
+Connections and tool registrations have different lifetimes. Native catalog objects are reused without mutable per-tool-loader state. The integration adds their functions only to the current invocation, never to the shared agent's tool list.
 
-The chosen integration is `NativeMCPToolsMiddleware` in `skills_orchestrator_python/native_mcp.py`: under 100 lines including imports, documentation, and a connection dataclass. It supplies native runtime tool objects through public middleware APIs and keeps them alive until a streamed response finishes, fails, or is cancelled. Ordinary followups load needed operations again.
+The hook lives in `skills_orchestrator_python/native_mcp.py`. At initialization, it binds skill identities from the configured sources' metadata to their native catalogs and rejects ambiguous names. MAF 1.17 returns skill content rather than a typed success envelope: after native invocation, the hook compares the normalized text result with that same cached skill's public `get_content()` result. A known name alone is not enough to register tools; failures, cancellations, and non-text approval results do not qualify.
 
-Provider operations use native `approval_mode="never_require"` and the SDK's automatic function invocation. Instruction reads use the standard skills read-only auto-approval rule. The adapter does not maintain approval state or custom resumption logic; this demo uses automatic execution for its trusted read-only providers.
+Those registrations last through the response stream and disappear when the run finishes, fails, or is cancelled. Followups load needed skills again; conversation history is retained separately. Nothing sends an unload command to the MCP server or closes its shared connection at the end of a request.
 
-**The middleware manages lifetime. It does not map skills to operations, select tool names, implement dynamic loading, or replace the SDK's dispatcher, schema handling, or approval engine.** Per-invocation native objects provide isolation; middleware is how these shared-agent hosts supply them.
+Provider operations use native `approval_mode="never_require"` and the SDK's automatic function invocation. The two `SkillsProvider` settings above also make instruction reads automatic, without an approval/resumption boundary. The hook does not maintain approval state or custom resumption logic; this demo uses automatic execution for its trusted read-only providers.
 
-The shared builder connects these pieces as follows, omitting optional history configuration:
+**The hook maps a successfully loaded skill to a provider catalog. MAF handles function registration, descriptions, schemas, dispatch, and execution.** This is deliberately a small integration, not a second tool framework.
+
+The shared builder keeps provider operations out of the agent's initial tools:
 
 ```python
 agent = client.as_agent(
@@ -281,22 +288,20 @@ agent = client.as_agent(
     instructions=INSTRUCTIONS,
     context_providers=[skills],
     tools=[researcher_tool],
-    middleware=[
-        ToolApprovalMiddleware(
-            auto_approval_rules=[
-                SkillsProvider.read_only_tools_auto_approval_rule
-            ]
-        ),
-        NativeMCPToolsMiddleware(connections),
-    ],
+    middleware=[skill_tools],
 )
+await skill_tools.initialize(agent, exit_stack)
 ```
 
-For the small-catalog alternative, leave `use_progressive_disclosure=False` and register the MCP integration directly in the agent's `tools`. All advertised operation definitions are available upfront, and this progressive-state lifecycle adapter can be omitted.
+The observer's registration step is `context.add_tools(native.functions)`.
+The public SDK owns same-object deduplication and next-iteration visibility,
+including when several skills are selected in one model iteration.
+
+For the small-catalog alternative, use the same native MCP objects but register them directly in the agent's `tools`. All advertised operation definitions are then available upfront, and the skill-to-provider hook can be omitted. With group loading, selecting a skill adds more schemas than selecting one operation, but avoids a separate model step devoted to loading tool names.
 
 ## Following a real execution
 
-For the comparison, I sent this exact prompt through both chat paths of the same running Aspire application:
+For the comparison, I sent this exact prompt through both chat paths of the same running Aspire application, using skill-scoped implementation `56f453a`:
 
 > considering weather and waiting time, where should i start?
 
@@ -314,16 +319,17 @@ A2A pair 3: observed call structure
       chat gpt41
     lifttrafficagenta2a
       chat gpt41
-      ListAllLifts
+      GetWaitTimes
+      SuggestLessBusyArea
       chat gpt41
     skicoachagenta2a
       chat gpt41                     asks for skill level/preferences
-  chat gpt41                         advisor asks the user to clarify
+  chat gpt41                         recommends Eagle Chair and asks about ability
 ```
 
 That is seven model calls, not seven sequential calls. The remote specialists overlap, so adding their durations would not give client elapsed time.
 
-All three native-skills runs selected weather and lift traffic and used this four-call model sequence:
+All three skill-scoped runs selected weather and lift traffic and used this three-call model sequence:
 
 ```text
 chat gpt41 #1
@@ -331,29 +337,25 @@ chat gpt41 #1
   load_skill({"skill_name":"lift-traffic"})
 
 chat gpt41 #2
-  weather_load_tool({"tool":"weather_current_conditions"})
-  lifttraffic_load_tool({"tool":"lift_traffic_least_busy_area"})
-
-chat gpt41 #3
   weather_weather_current_conditions({})
   lifttraffic_lift_traffic_least_busy_area({})
 
-chat gpt41 #4
+chat gpt41 #3
   final answer
 ```
 
-The two operations at each stage were batched in the same model iteration. All four model calls belonged to the advisor. Extra `invoke_agent` spans emitted by hosting did not represent additional specialist agents or extra model calls.
+The host registered all three weather tools and all four lift-traffic tools after the skill reads. The model then selected one operation from each group, with their descriptions and schemas available. There was no separate tool-loader call. Skill reads and the two operation calls were each batched within their respective model iteration. All three model calls belonged to the advisor; `invoke_agent` aggregates are not additional model calls.
 
-The requests did not force identical work. A2A also requested a weather forecast in pairs 1 and 2; native skills used current conditions only. Both A2A runs recommended a lift, but pair 3 asked for skier ability and preferences. Native skills recommended Alpine Express in pairs 1 and 2, and Summit Gondola in pair 3 as live conditions changed.
+All six responses recommended Eagle Chair. They did not perform identical work: A2A called both `GetWaitTimes` and `SuggestLessBusyArea`, whereas the skills advisor called only `lift_traffic_least_busy_area`. Pair 3's A2A response also asked about skier ability after consulting the coach. Weather values and queue times changed between requests.
 
 **Trace limitation:** the exported advisor/model spans carried each request's injected trace ID, including the A2A specialists. Native MCP provider HTTP operations appeared under separate trace IDs. I correlated those by destination and overlapping timestamps, not by inventing parent-child links. Frontend/root spans were not present in the export, so these are observed call structures, not screenshots of a complete end-to-end tree.
 
-<!-- Optional screenshot: A2A pair 3, trace 4221d53bb0734616ce4b0f718dbda251, expanded to show weather, lift and coach. This is a current local Aspire capture, not a publicly accessible trace. Remove authentication parameters and unrelated environment details. -->
-<!-- Optional screenshot: native pair 3, host/model trace 7d5c879fcb124a90e13bf900e0a259db, showing four model calls and native loaders/direct calls. Show weather provider trace 95a6eb39c036519409567dbe4bcfbf78 and lift provider trace 9de04c99b36d8d0bff9bd13026f7b152 separately; destination/timestamp correlation is not a connected trace tree. -->
+<!-- Optional screenshot: A2A pair 3, trace 6f8083fd86ac2ee454f9b9f7477ecb86, expanded to show weather, lift and coach. This is a local Aspire capture, not a publicly accessible trace. Remove authentication parameters and unrelated environment details. -->
+<!-- Optional screenshot: skill-scoped pair 3, host/model trace b6f726e3dd6262cc440f44cdbad85367, showing three model calls: skill loads, direct operations, answer. Show weather provider trace 1b458a45fea5eebaf38506b4ff504ffc and lift provider trace dad07300af041f4d462bb6f91da520e9 separately; destination/timestamp correlation is not a connected trace tree. -->
 
 ## What changed in latency and tokens?
 
-These measurements were captured on **September 10, 2026**, against native-tools commit `b8306c4`, using the `gpt41` deployment. Later simplification removed the redundant host tool-name list and unused manual-approval resumption code. The same twelve provider operations still load dynamically and execute automatically, but these timings are the original capture, not a new benchmark of that simplification.
+These measurements were captured on **September 10, 2026, 13:03-13:09 UTC**, against skill-scoped commit `56f453a`, using the `gpt41` deployment.
 
 Each request used the exact prompt quoted above and a fresh conversation, with no previous response ID or history. All six reused already-running services and connections. The order was A2A/native in pair 1, native/A2A in pair 2, and A2A/native in pair 3, with at least 65 seconds between responses and subsequent requests.
 
@@ -363,36 +365,36 @@ Token totals sum each unique leaf **`chat gpt41`** span once, including every re
 
 | Pair | Architecture | Elapsed | Input tokens | Output tokens | Total tokens | Model calls | Cached input |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 1 | A2A specialists | 15.240 s | 3,524 | 590 | 4,114 | 6 | Partial* |
-| 1 | Native MCP skills | 5.507 s | 7,855 | 222 | 8,077 | 4 | 3,328 |
-| 2 | Native MCP skills | 5.924 s | 7,857 | 225 | 8,082 | 4 | 7,296 |
-| 2 | A2A specialists | 12.240 s | 3,417 | 518 | 3,935 | 6 | Partial* |
-| 3 | A2A specialists | 15.160 s | 3,324 | 579 | 3,903 | 7 | Partial* |
-| 3 | Native MCP skills | 5.965 s | 7,865 | 218 | 8,083 | 4 | 7,296 |
+| 1 | A2A specialists | 16.416 s | 2,971 | 578 | 3,549 | 6 | Partial* |
+| 1 | Native MCP skills | 8.661 s | 4,341 | 178 | 4,519 | 3 | 1,536 |
+| 2 | Native MCP skills | 5.866 s | 4,337 | 165 | 4,502 | 3 | 1,536 |
+| 2 | A2A specialists | 12.835 s | 2,974 | 580 | 3,554 | 6 | Partial* |
+| 3 | A2A specialists | 17.188 s | 3,394 | 637 | 4,031 | 7 | Partial* |
+| 3 | Native MCP skills | 4.517 s | 4,341 | 171 | 4,512 | 3 | 3,072 |
 
 *A2A advisor spans reported zero cached input; specialist spans omitted cache counters. Whole-system cached input is therefore unknown, not zero. Native cached tokens are already included in input totals.*
 
-**The native path was faster in these warm, cache-affected runs:** mean elapsed time was 5.799 seconds versus 14.213 seconds for A2A. This does not isolate an architectural speedup from cache effects, model routing, language/runtime differences, or the amount of work performed.
+**The skills path was faster in these reused-process, cache-affected runs:** mean elapsed time was 6.348 seconds versus 15.480 seconds for A2A. This does not isolate an architectural speedup from cache effects, first-use credential initialization, language/runtime differences, or the amount of work performed.
 
-**It did not use fewer total tokens.** Across three runs, native skills consumed 24,242 observed tokens versus 11,952 for A2A, approximately twice as many. Fewer model calls did not mean less cumulative context. In the first native run, the four input counts were 1,347, 1,971, 2,127, and 2,410, totaling 7,855 as instructions, selected schemas, and results accumulated.
+**It did not use fewer total tokens.** Across three runs, native skills consumed 13,533 observed tokens versus 11,134 for A2A, about 22% more. Fewer model calls did not mean less cumulative context. In the first skills run, input counts were 866, 1,593, and 1,882, totaling 4,341 as instructions, provider-group schemas, and results accumulated.
 
-That is **not a claim of twice the billable cost**. Native runs reported 17,920 cached input tokens overall, and A2A specialist cache reporting was incomplete. Input, cached input, and output have different pricing implications. These measurements report tokens, not a dollar comparison.
+That is **not a billable-cost ratio**. Native runs reported 6,144 cached input tokens overall, and A2A specialist cache reporting was incomplete. Input, cached input, and output have different pricing implications. These measurements report tokens, not a dollar comparison.
 
-There is an accounting trap in the other direction too. Pair 1's A2A Responses usage reported 1,795 tokens for the advisor. Weather added 1,170 and lift traffic 1,149, bringing the observed whole-system total to 4,114. Comparing only top-level API usage would omit most of that request's work.
+There is an accounting trap in the other direction too. Pair 1's A2A Responses usage reported 1,751 tokens for the advisor. Weather added 633 and lift traffic 1,165, bringing the observed whole-system total to 3,549. Comparing only top-level API usage would omit more than half that request's tokens.
 
-All six responses completed without benchmark retries or failing model spans. The saved A2A traces also contain non-model queue-shutdown error spans; those are retained in the evidence rather than treated as failed model calls. Retries invisible inside an SDK request cannot be independently counted from this export.
+All six responses completed without benchmark retries or failing model spans. Non-model errors remain in the evidence: A2A queue-shutdown spans and approximately one-second managed-identity credential probes in the first A2A and skills requests. Those are not failed model calls, but their initialization overhead is included in wall time. Retries invisible inside an SDK request cannot be independently counted from this export.
 
-This is a three-pair illustration, not a controlled performance or quality study. Live telemetry changed during cooldowns, application processes and model caches were warm, and tool choices differed. Pair 3's A2A clarification is not equivalent to native's recommendation. Native also used "safe"/"safer" wording in pairs 2 and 3 without consulting the safety provider, so those statements are not verified safety findings. Faster first responses do not establish equally correct or complete advice.
+This is a three-pair illustration, not a controlled performance or quality study. Processes were reused, prompt-cache hits varied, and live telemetry changed during cooldowns. A2A performed more lift queries and added a coach exchange in pair 3. All skills responses, and A2A's first response, used safety language without consulting the safety provider; those statements are not verified safety findings. Faster responses do not establish equally correct or complete advice.
 
-The structural observation is narrower: **six, six, and seven model calls across A2A components versus four calls in the single skills advisor**, with the native loading flow visible in the traces. Whether that tradeoff helps another workload requires its own acceptance criteria and measurements.
+The structural observation is narrower: **six, six, and seven model calls across A2A components versus three calls in each skills-advisor run**, with skill loading followed immediately by direct MCP operations. Whether that tradeoff helps another workload requires its own acceptance criteria and measurements.
 
-<!-- Measurement evidence: native-blog-benchmark/reconciled-summary.json and pair-*-{a2a,skill}.json in this session's private artifacts. Raw SSE records, requested-trace exports, time-window exports, harness, report and hash manifest are retained; no failed or old-prompt pilot requests occurred.
-Pair 1 A2A: bbb6915a823754f07d18c67f480f2651
-Pair 1 native: 95565e6321dcab0a89e2da7f3d6f8bc7
-Pair 2 native: a003fdbf7886ca5f4e7833b6ca299d02
-Pair 2 A2A: 1c2e01236fd8e7c2b175de8a29c6aff8
-Pair 3 A2A: 4221d53bb0734616ce4b0f718dbda251
-Pair 3 native: 7d5c879fcb124a90e13bf900e0a259db
+<!-- Measurement evidence: skill-group-benchmark/reconciled-summary.json and pair-*-{a2a,skill}.json in this session's private artifacts. Raw SSE records, requested-trace exports, time-window exports, harness and hash manifest are retained; no failed or retried benchmark requests occurred.
+Pair 1 A2A: 110dafad51477c2c90293a7bcce9bb06
+Pair 1 native: e2c231565939d165a34bed57402b6cd5
+Pair 2 native: 52a987c6c7d85698c1e5edffd287add3
+Pair 2 A2A: 3a4fbbbc72d2a03b5882d536b77bc55c
+Pair 3 A2A: 6f8083fd86ac2ee454f9b9f7477ecb86
+Pair 3 native: b6f726e3dd6262cc440f44cdbad85367
 Trace IDs refer to the local Aspire capture, not public URLs.
 -->
 
@@ -400,7 +402,7 @@ Trace IDs refer to the local Aspire capture, not public URLs.
 
 Start with one bounded domain. Preserve the existing services, expose typed tools, and compare routing, data correctness, and answer quality before changing traffic.
 
-Choose eager versus progressive tool exposure according to the real catalog and workload. Loading instructions and then selected schemas adds model steps; a smaller initial context is not automatically a faster or cheaper conversation.
+Choose eager versus skill-scoped exposure according to the real catalog and workload. A skill should group related operations. Loading a whole provider saves a separate tool-selection step but supplies schemas that may not all be used; a smaller initial context is not automatically a faster or cheaper conversation.
 
 Keep access policy in the host and provider, separate from skill instructions. Use credentials intended for the configured endpoint and deliberate request-context propagation. Do not place changing users' credentials in a shared client's mutable defaults or in skill text.
 
@@ -412,7 +414,7 @@ The useful distinction is **delegating a task to another reasoner versus giving 
 
 In this demo, specialist hosting becomes MCP provider hosting. The Agent Card's descriptive identity becomes skill metadata, the system prompt becomes an enriched `SKILL.md`, and the tools remain tools.
 
-The weather service stays remote. Its reasoning moves into the advisor. Native MAF supplies the loading and invocation machinery, while a small lifecycle adapter fits progressive tool objects into the demo's shared hosts.
+The weather service stays remote. Its reasoning moves into the advisor. A small host hook binds skill loading to the provider's catalog; native MAF supplies request-local registration and remote invocation.
 
 ---
 
@@ -420,19 +422,19 @@ The weather service stays remote. Its reasoning moves into the advisor. Native M
 
 Repository: **[Ski resort multi-agent and distributed skills demo](https://github.com/tommasodotNET/ski-resort-demo)**.
 
-The measured native-tools version is pinned to [commit `b8306c4`](https://github.com/tommasodotNET/ski-resort-demo/commit/b8306c42def96a78aacb89f4f515a4b7aab8799c). The subsequent catalog and automatic-invocation simplification is in [commit `df153a6`](https://github.com/tommasodotNET/ski-resort-demo/commit/df153a687279cc7e93fe5c9be7cb987f022d0c78). Links below identify the relevant revisions; the benchmark remains tied to its original capture:
+The implementation is pinned to [commit `56f453a`](https://github.com/tommasodotNET/ski-resort-demo/commit/56f453a2c52de91ac71ef19da83caec4976f5a17). These permalinks identify the skill-scoped code used for this article:
 
 | Area | Code path |
 |---|---|
-| Original A2A advisor | [`src/ski-advisor-a2a/Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-a2a/Program.cs) |
-| Shared skills advisor construction | [`agent_builder.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-skill/skills_orchestrator_python/agent_builder.py) |
-| Native tool lifetime integration | [`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py) |
-| Provider endpoints and prefixes | [`config.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/skills_orchestrator_python/config.py) |
-| Generated weather skill | [`WeatherSkillCatalog.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Skills/WeatherSkillCatalog.cs) |
-| Weather tool adapters and typed results | [`WeatherTools.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Tools/WeatherTools.cs) |
-| Weather instructional resources and host | [`WeatherSkillResources.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Skills/WeatherSkillResources.cs), [`Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Program.cs) |
-| Native-loop and local MCP coverage | [`tests/`](https://github.com/tommasodotNET/ski-resort-demo/tree/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/tests) |
-| Aspire topology | [`src/apphost.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/apphost.cs) |
+| Original A2A advisor | [`src/ski-advisor-a2a/Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-a2a/Program.cs) |
+| Shared skills advisor construction | [`agent_builder.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/agent_builder.py) |
+| Skill-to-provider registration hook | [`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py) |
+| Provider endpoints and prefixes | [`config.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/config.py) |
+| Generated weather skill | [`WeatherSkillCatalog.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/weather-skills/Skills/WeatherSkillCatalog.cs) |
+| Weather tool adapters and typed results | [`WeatherTools.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/weather-skills/Tools/WeatherTools.cs) |
+| Weather instructional resources and host | [`WeatherSkillResources.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/weather-skills/Skills/WeatherSkillResources.cs), [`Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/weather-skills/Program.cs) |
+| Native-loop and local MCP coverage | [`tests/`](https://github.com/tommasodotNET/ski-resort-demo/tree/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/tests) |
+| Aspire topology | [`src/apphost.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/apphost.cs) |
 
 The distinction between format, transport, and SDK behavior matters:
 
@@ -440,4 +442,4 @@ The distinction between format, transport, and SDK behavior matters:
 - [MCP resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools): the protocol primitives used here.
 - [Historical SEP-2640 Draft revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/b3f015a7929041dada4b0eaf5a657b30d4f5d6d1/seps/2640-skills-extension.md): the index-based transport profile implemented by this demo.
 - [SEP-2640 proposal](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) and [September 3 accepted-text revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/d6b31a03504c15677d49b922b6b6ace0ef65728d/seps/2640-skills-extension.md): evolving upstream status and a different discovery contract.
-- [MAF native progressive-MCP sample](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/samples/02-agents/mcp/mcp_progressive_disclosure.py) and [implementation](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_mcp.py): the experimental API used with `agent-framework-core==1.17.0`.
+- [MAF function-invocation registration API](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_middleware.py) and [native MCP implementation](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_mcp.py): the public APIs used with `agent-framework-core==1.17.0`; progressive `add_tools` is experimental.

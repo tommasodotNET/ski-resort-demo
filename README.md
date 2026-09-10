@@ -109,10 +109,12 @@ src/
 ### Skills advisor
 
 The skills advisor composes MAF's `SkillsProvider` / `MCPSkillsSource` with
-`MCPStreamableHTTPTool(use_progressive_disclosure=True)`. The model loads a
-skill, follows its instructions to load named tools through the SDK's native
-loader, and invokes those tools directly. This is the skills architecture's
-single execution path; no mode switch or Foundry Toolbox is required.
+native MCP functions and request-local `FunctionInvocationContext.add_tools`.
+After a skill loads successfully, a small host hook registers every tool from
+that skill's configured provider for the next model iteration. The model sees
+their descriptions and schemas before choosing which to invoke. This is the
+skills architecture's single execution path; no mode switch or Foundry Toolbox
+is required.
 
 Both Responses and A2A hosting surfaces use the same builder. The frontend's
 separate A2A-specialist architecture selection remains unchanged. See the
@@ -121,8 +123,8 @@ for tool loading, approval, lifetime, and local testing.
 
 This small demo illustrates a larger-tool-catalog pattern. For genuinely small
 catalogs, load the configured providers' MCP tools upfront with the standard SDK instead.
-That simpler composition does not need this demo's progressive-state lifecycle
-middleware; it can still load skill instructions on demand.
+That simpler composition does not need this demo's skill-to-provider registration
+hook; it can still load skill instructions on demand.
 
 ### Data Generator
 
@@ -169,9 +171,9 @@ This sample implements the same four specialist domains as A2A agents and MCP sk
 
 | Agent as a tool | Agent as a skill |
 |---|---|
-| The advisor sees one function per remote A2A agent | The advisor initially sees skill summaries and native loader functions |
-| Invoking the function starts a second specialist model run | `load_skill` adds the selected specialist context to the existing model run |
-| The specialist model chooses and calls its own tools | The advisor follows `SKILL.md`, loads named MCP tools, and calls them directly |
+| The advisor sees one function per remote A2A agent | The advisor initially sees skill summaries and skill-loading functions |
+| Invoking the function starts a second specialist model run | Successful `load_skill` supplies instructions and triggers registration of the provider's tools |
+| The specialist model chooses and calls its own tools | The advisor follows `SKILL.md` and chooses from the group's full tool descriptions and schemas |
 | A2A returns the specialist's synthesized answer | MCP `tools/call` returns the tool handler's data |
 
 Calling this pattern **agent as a skill** is an architectural mapping: the skill
@@ -206,8 +208,8 @@ The index is the lightweight discovery layer:
 }
 ```
 
-`SKILL.md` contains the domain instructions, names the relevant tools, and
-directs the model to the provider's native loader. Resources carry only
+`SKILL.md` contains domain instructions and explains that the provider's tools
+become available after the skill loads. Resources carry only
 discovery and instructions; operational data is returned by tool handlers
 backed by the existing domain services:
 
@@ -224,45 +226,50 @@ app.MapMcp("/skillsmcp");
 ### What the Python advisor consumes
 
 `SkillsProvider` and `MCPSkillsSource` discover and load the skill documents.
-MAF's experimental `MCPStreamableHTTPTool` progressive-disclosure API supplies
-provider-prefixed loader functions and registers selected remote operations
-for the next model iteration. The loaded functions retain native MCP
-transport and approval behavior; there is no custom operation dispatcher.
+`MCPStreamableHTTPTool` discovers authoritative native functions host-side.
+A small function-invocation hook associates a successfully loaded skill with its
+configured provider and registers that provider's whole catalog using MAF's
+experimental `FunctionInvocationContext.add_tools` API. The functions retain
+their descriptions, schemas, native MCP transport, and approval behavior;
+there is no custom operation dispatcher.
 
 ### Native progressive-disclosure flow
 
 1. The SDK reads discovery metadata and the paginated MCP tool catalogs
    host-side. The initial model context contains skill summaries and generic
-   native loading functions, not all domain operation schemas.
+   skill-loading functions, not domain operation schemas or per-tool loaders.
 2. The model calls `load_skill({"skill_name":"weather"})`; MAF reads the weather `SKILL.md`.
-3. The model follows the skill's named-tool guidance and calls the weather
-   provider's native `weather_load_tool({"tool":"weather_forecast"})`.
-4. The SDK registers the requested operation with its schema for the next
-   model iteration. The model then calls `weather_weather_forecast({"hours":6})`.
+3. After the skill read succeeds, the host registers all three weather tools
+   for this run through `add_tools`. Other providers' tools remain hidden.
+4. On the next model iteration, the model chooses from the weather tools'
+   descriptions and input schemas, for example
+   `weather_weather_forecast({"hours":6})`.
 5. Native MCP `tools/call` executes the .NET handler, which reads resort data.
    The same advisor model uses the result to answer.
 
-Skill-to-tool association is instructional guidance, not an authorization
-boundary or an atomic SDK guarantee. A model can call a loader without first
-loading a skill. The native `list_mcp_tools` function can disclose its provider's
-catalog when requested; skill instructions avoid that broad listing by naming
-the needed tools. See the [advisor documentation](src/ski-advisor-skill/README.md#native-progressive-disclosure)
-for the actual lifetime and approval guarantees.
+The model selects the skill; the host determines the tool group. This
+skill-to-provider association is application glue, not a feature that
+`SkillsProvider` automatically supplies and not a replacement for authorization.
+Each current provider hosts one skill. Loading it exposes every operation in
+that provider's catalog, but does not execute them. There are no model-facing
+per-provider list/load/unload helpers. See the
+[advisor documentation](src/ski-advisor-skill/README.md#native-progressive-disclosure)
+for lifetime and approval details.
 
 The configured providers' tool catalogs are the source of truth; the advisor
-does not maintain a duplicate tool-name allowlist. Native loaders can load any
-advertised tool, but schemas remain hidden until selected. The current trusted
+does not maintain a duplicate tool-name allowlist. A selected skill exposes its
+provider's full catalog, not only name-matched operations. The current trusted
 providers expose read-only operations, which retain unattended execution.
 Native `approval_mode="never_require"` and the SDK function-calling loop handle
-that execution automatically. Instruction reads use the standard skills
-read-only auto-approval rule; there is no custom approval-resumption bookkeeping.
+that execution automatically. Native `SkillsProvider` settings disable approval
+prompts for instruction reads too; there is no approval-resumption bookkeeping.
 
-`NativeMCPToolsMiddleware` is under 100 lines of public-API lifetime glue, including
-imports and documentation. It supplies fresh native MCP tool objects per
-invocation to isolate loaded-name state on the shared agent. It does not map
-skills to tools or implement loading, dispatch, schemas, or approval. Shared
-MCP connections stay open until app shutdown; streamed calls keep their
-invocation-local objects alive until completion, failure, or cancellation.
+Registrations belong to the current invocation, not the shared agent.
+They last through the response stream and disappear when that run ends,
+including failure or cancellation. Followups start without operation tools and
+load their skills again; conversation history is separate. MCP connections stay
+open until app shutdown. The shared native MCP objects do not maintain mutable
+per-tool-loader state; only their registrations are invocation-local.
 
 ## Key Technologies
 
@@ -276,12 +283,13 @@ invocation-local objects alive until completion, failure, or cancellation.
 
 ## Further Reading
 
-The September 10, 2026 three-pair comparison measured mean latency of **14.213 s
-A2A versus 5.799 s native skills**, on warm, cache-affected infrastructure.
-Observed whole-system tokens were **11,952 versus 24,242** across the three runs.
-This is not a pure architectural speedup or a billable-cost ratio: native cache
-hits were substantial, A2A cache reporting was partial, and model-selected work
-differed. The article and deck contain the identical six-row table and caveats.
+The article and deck compare the two advisor paths using three fresh-conversation
+pairs at `56f453a`: mean elapsed **15.480 s A2A versus 6.348 s skills**, with
+**11,134 versus 13,533** whole-system tokens across the three runs. Skills used
+three model calls per request; A2A used six, six, and seven including remote
+specialists. Reused processes, prompt-cache variation, first-use credential
+probes, live data, and different model-selected work matter. These observations
+are not a controlled architectural speedup, quality study, or billable-cost ratio.
 
 - [Architecture](ARCHITECTURE.md): component and protocol diagrams.
 - [Native MAF migration article](BLOG_DISTRIBUTED_AGENT_SKILLS.md): implementation

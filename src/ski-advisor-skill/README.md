@@ -1,7 +1,7 @@
 # Skills Orchestrator (`skiadvisorskill`)
 
 Python Microsoft Agent Framework (MAF) advisor combining remote Agent Skills
-with native progressive MCP tool loading. Weather, safety, ski-coach, and
+with skill-scoped native MCP tool loading. Weather, safety, ski-coach, and
 lift-traffic run as .NET MCP providers with twelve typed tools, not specialist
 model loops. The existing Foundry ski researcher remains a separate direct
 agent tool.
@@ -40,25 +40,28 @@ The composition uses existing SDK capabilities:
 
 - `MCPSkillsSource` and `SkillsProvider` discover skill summaries and implement
   `load_skill`.
-- `MCPStreamableHTTPTool(use_progressive_disclosure=True)` implements each
-  provider's `list_mcp_tools`, `load_tool`, and `unload_tool` functions.
-- Native `load_tool` registers selected remote `FunctionTool` definitions via
+- `MCPStreamableHTTPTool(use_progressive_disclosure=False)` discovers the
+  provider's full catalog as native functions, retained host-side rather than
+  attached to the shared agent's initial tools.
+- After a successful `load_skill`, a small host hook registers **all functions
+  from that skill's configured provider** with
   `FunctionInvocationContext.add_tools` for the **next model iteration**.
-  Their invocation, argument binding, MCP transport, and approval behavior
-  remain SDK-managed.
+  Descriptions, input schemas, argument binding, MCP transport, and approval
+  behavior remain SDK-managed.
 
-The model-mediated flow is:
+The model selects the skill; the host supplies its tool group:
 
 ```text
 load_skill({"skill_name": "weather"})
-weather_load_tool({"tool": "weather_forecast"})
-weather_weather_forecast({"hours": 6})  # next model iteration
+  # Host registers all weather tools for this run after successful loading.
+weather_weather_forecast({"hours": 6})  # next model iteration, if chosen
 ```
 
 The last call reaches MCP `tools/call` with the original remote name
 `weather_forecast`. The repeated `weather_` is intentional: MAF's configured
 provider prefix is added to the provider's already domain-prefixed tool name.
-The loader's `tool` argument accepts one raw remote name or an array of names.
+The model sees every weather operation's description and schema before choosing
+which to execute. Registration itself does not execute any operation.
 
 There is no custom operation dispatcher, Foundry Toolbox, semantic search
 service, or second specialist model call.
@@ -66,28 +69,30 @@ service, or second specialist model call.
 ### What is disclosed, and when
 
 The SDK retrieves MCP tool catalogs **host-side** using paginated `tools/list`
-when each invocation's native tool objects connect.
+when the app-owned native MCP objects connect.
 That network discovery is not deferred until a model selects a skill.
 Progressive disclosure defers *model exposure*: initial context contains
-skill summaries and native management functions, not the twelve operations'
-full schemas. Loading a skill supplies its instructions; calling the native
-loader is a separate model step that registers the requested functions.
+skill summaries and skill-loading functions, not the twelve operations'
+full schemas. Successful skill loading supplies both the instructions and,
+through the host hook, the provider's tool group for the next iteration.
 
-Canonical `SKILL.md` documents name their relevant tools and loader directly.
-The model therefore need not call `list_mcp_tools` to choose a known operation.
-If it does call that native function, it receives descriptions and parameters
-for the provider's advertised catalog. This is normal SDK behavior, not a hidden
-all-tools prohibition.
+Canonical `SKILL.md` documents describe how to use the provider's operations.
+There are no model-facing per-provider list/load/unload helpers and no extra
+model turn dedicated to choosing tool names for a loader. The native MCP
+wrapper's `use_progressive_disclosure=False` disables those helpers; it does
+**not** expose its functions initially, because they are not registered until
+the selected skill loads.
 
-Skill-to-tool association is **instructional guidance**, not an authorization
-boundary or an atomic SDK guarantee. The model can call a loader without
-first calling `load_skill`. Approval and configured tool access are separate
-from instruction loading.
+The skill-to-provider association is **application integration**, not automatic
+behavior built into `SkillsProvider` or a core MCP rule. Each current provider
+hosts one skill; selecting it exposes that provider's complete catalog. Failed
+skill loads must not register tools. This is a context-exposure rule, not
+authorization: configured access and approval policy remain separate.
 
-The progressive MCP API is experimental in MAF core 1.17.0. Rerun the
+The public `add_tools` API is experimental in MAF core 1.17.0. Rerun the
 framework-level tests when upgrading. Reference samples:
 
-- [MCP progressive disclosure](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/samples/02-agents/mcp/mcp_progressive_disclosure.py)
+- [MAF progressive registration API](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_middleware.py)
 - [MCP-based skills](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/skills/mcp_based_skill/mcp_based_skill.py)
 - [Cosmos history provider](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/conversations/cosmos_history_provider.py)
 
@@ -98,7 +103,7 @@ Each configured provider exposes `/skillsmcp` over streamable HTTP.
 | MCP capability | Content |
 | --- | --- |
 | `resources/read skill://index.json` | Skill names, descriptions, and canonical document locations |
-| `resources/read skill://<name>/SKILL.md` | Domain instructions and native named-tool loading guidance |
+| `resources/read skill://<name>/SKILL.md` | Domain instructions and tool-use guidance |
 | `tools/list` | Typed tool names, descriptions, input/output schemas, and annotations |
 | `tools/call` | Execution by the existing .NET domain services |
 
@@ -112,63 +117,72 @@ operations are MCP tools:
 | `skicoach` | `ski-coach` | `ski_coach_recommendations`, `ski_coach_day_plan` |
 | `lifttraffic` | `lift-traffic` | `lift_traffic_lifts`, `lift_traffic_lift_status`, `lift_traffic_wait_times`, `lift_traffic_least_busy_area` |
 
-Provider prefixes keep model-visible tools and loaders distinct. Configured
+Provider prefixes keep model-visible tools distinct. Configured
 connections determine where tools run; skill instructions do not configure
 new endpoints. Tool results are structured, with errors and cancellation
 handled through the MCP/MAF stack rather than fabricated operational data.
 
-| Native loader | Example registered callable |
+| Skill loaded | Example registered callable |
 | --- | --- |
-| `weather_load_tool` | `weather_weather_forecast` |
-| `safety_load_tool` | `safety_safety_risk` |
-| `skicoach_load_tool` | `skicoach_ski_coach_recommendations` |
-| `lifttraffic_load_tool` | `lifttraffic_lift_traffic_lifts` |
+| `weather` | `weather_weather_forecast` |
+| `safety` | `safety_safety_risk` |
+| `ski-coach` | `skicoach_ski_coach_recommendations` |
+| `lift-traffic` | `lifttraffic_lift_traffic_lifts` |
 
-Each prefix also has native `list_mcp_tools` and `unload_tool` functions.
+Each skill load exposes its entire provider group, not only the example above.
 
 The Agent Card's descriptive identity maps to skill metadata; its authentication
 and transport configuration do not. The former system prompt supplies domain
 instructions. Tools remain MCP tools backed by remote domain services. The
-generated documents add MAF-specific loader guidance, so they are not presented
+generated documents add host-specific registration guidance, so they are not presented
 as host-neutral examples of the general `SKILL.md` format.
 
 ## Tool lifetime and approval
 
-`skills_orchestrator_python/native_mcp.py` contains under 100 lines including imports,
-documentation, a connection dataclass, and the `NativeMCPToolsMiddleware`
-lifecycle adapter. Native progressive tool objects
-retain mutable loaded-name state, so sharing them on either host's singleton
-agent would leak tool exposure between users. The adapter creates fresh native
-objects per invocation while reusing host-owned MCP sessions. It closes those
-objects after completion, failure, or cancellation, including lazy streams.
-It supplies native runtime tool objects through public middleware APIs, not a
-skill-to-tool resolver. Discovery, schema generation, loading, dispatch, and
-approval remain SDK code.
+`SkillToolsMiddleware` in `skills_orchestrator_python/native_mcp.py` is a
+public `FunctionMiddleware` hook. Its job is to attach native functions after
+a successful skill read. It does not recreate schemas, dispatch MCP calls,
+or implement an approval engine.
+
+Native `CachingSkillsSource` wrappers ensure the `SkillsProvider` and observer
+use the same skill objects. Public source metadata establishes the provider
+binding; ambiguous names are rejected. MAF 1.17 normalizes a successful skill
+read into text `Content`, not a typed success envelope. The observer compares
+that result with the same cached `Skill.get_content()` before adding tools.
+It does not infer success solely from a known name or parse error prefixes.
 
 The reusable MCP connections stay open for the application's lifetime.
 `AsyncExitStack` is the cleanup manager that closes them on shutdown and cleans
-up failed connection setup. It is separate from the invocation-local tool
-objects that live until their response stream finishes.
+up failed connection setup. Native catalog objects are also app-owned.
+Only their registrations are run-local: `add_tools` does not mutate the shared
+agent's tools or maintain shared loaded-name state.
 
-Ordinary followups start with loaders again, including restored conversations.
+Registrations remain available throughout the response stream and are discarded
+when the run ends, including failure or cancellation. This is not a remote
+MCP unload command. Ordinary followups start without operation tools, including
+restored conversations, and load their skills again. History is preserved
+separately.
 There is no custom pending-approval state or resumption logic in the adapter.
 The SDK's function-calling loop automatically invokes the model-selected
 operations after they have been loaded.
 
 The configured providers' MCP catalogs are the source of truth. The host omits
-`allowed_tools`, so any advertised tool can be loaded without changing advisor
-configuration. This does not expose all schemas upfront: native progressive
-loading still adds only the requested operations to model context.
+`allowed_tools`, so a provider's discovered tools require no second advisor
+name list. This does not expose all schemas upfront: registration adds only
+the selected skill's provider group to model context. A server that later hosts
+unrelated skills would need finer grouping; that is not this demo's topology.
 
 The current providers are trusted application services exposing twelve read-only
 operations. They use native `approval_mode="never_require"`, independently of
 skill text or MCP annotations. A newly published tool inherits that policy;
-adding write operations requires revisiting approvals. Unknown tool names are
-still rejected by the native loader.
-Instruction reads use the SDK's standard `ToolApprovalMiddleware` with
-`SkillsProvider.read_only_tools_auto_approval_rule`. These are native approval
-settings, not another operation-name filter. Manual approval/resumption for
-provider operations is outside this always-automatic demo configuration.
+adding write operations requires revisiting approvals.
+Instruction reads use native `SkillsProvider` settings
+`disable_load_skill_approval=True` and
+`disable_read_skill_resource_approval=True`. These let the normal function loop
+continue without an approval/resumption boundary. There is no approval middleware
+or custom continuation state. Manual approval/resumption is outside this
+automatic configuration for the current instruction-only skills and read-only
+MCP operations. Native script approval defaults are not disabled.
 
 ### Simpler option for small catalogs
 
@@ -177,7 +191,7 @@ For a genuinely small catalog, the standard SDK can expose all advertised MCP
 tools upfront: set `use_progressive_disclosure=False` and register the MCP
 integration directly in the agent's `tools`. Keep ordinary connection lifetime,
 access policy, and optional skill instruction loading, but omit this demo's
-progressive-state lifecycle middleware. This is an alternative SDK composition,
+skill-to-provider hook. This is an alternative SDK composition,
 not another runtime mode implemented by this repository.
 
 ## Configuration

@@ -62,8 +62,9 @@ The A2A path exposes specialist Agent Cards and invokes them as remote tools.
 The skills path exposes `skill://index.json` and `skill://<name>/SKILL.md`
 instruction resources alongside twelve typed tools on independent .NET MCP
 services. The Python orchestrator composes native `SkillsProvider` /
-`MCPSkillsSource` with
-`MCPStreamableHTTPTool(use_progressive_disclosure=True)`. The Foundry
+`MCPSkillsSource` with native `MCPStreamableHTTPTool` functions and
+`FunctionInvocationContext.add_tools`. After a successful skill load, a small
+host hook exposes that provider's entire catalog for the current run. The Foundry
 researcher remains a separate agent tool. `CosmosHistoryProvider` uses a
 dedicated `/session_id`-partitioned `skillhistory` container for the A2A host.
 
@@ -92,9 +93,9 @@ flowchart LR
 
     subgraph Skills["Agent as a skill"]
         OS[Advisor model] -->|load_skill| MD[Remote SKILL.md]
-        MD -->|instructions name tools| OS
-        OS -->|native load_tool| SDK[MAF tool registration]
-        SDK -->|selected function schemas| OS
+        MD -->|successful load| HOOK[Host skill-to-provider hook]
+        HOOK -->|add_tools for this run| SDK[MAF tool registration]
+        SDK -->|instructions + all provider descriptions and schemas| OS
         OS -->|direct MCP tools/call| MT[Remote MCP tool]
         MT -->|service/API call| DATA[Live resort data]
         DATA --> MT --> OS
@@ -105,7 +106,7 @@ flowchart LR
 |---|---|---|
 | Initial discovery | A2A Agent Card becomes an advisor function | `skill://index.json` advertises name and description |
 | Domain instructions | Owned by the specialist model | Loaded into the advisor run from `SKILL.md` |
-| Operation selection | Specialist model selects a function | Advisor model loads named MCP functions using the native SDK loader |
+| Operation selection | Specialist model selects a function | Host exposes the selected skill's provider catalog; advisor chooses from full descriptions and schemas |
 | Remote execution | Specialist tool executes behind the A2A agent | Registered function calls the skill provider's MCP tool |
 | Model calls | Advisor + specialist | Advisor only |
 
@@ -115,7 +116,7 @@ Each provider separates instructional resources from executable tools:
 
 ```text
 skill://index.json                       # Discovery metadata
-skill://weather/SKILL.md                 # Domain instructions and named-tool guidance
+skill://weather/SKILL.md                 # Domain instructions and tool-use guidance
 MCP tools/list                          # Typed operation definitions, host-side discovery
 MCP tools/call weather_forecast          # Remote operation execution
 ```
@@ -134,7 +135,7 @@ app.MapMcp("/skillsmcp");
 ```
 
 The Python advisor uses native MAF skill loading and experimental progressive
-MCP tool registration. A typical weather request proceeds as follows:
+tool registration at skill/provider granularity. A typical weather request proceeds as follows:
 
 ```mermaid
 sequenceDiagram
@@ -147,13 +148,12 @@ sequenceDiagram
     M-->>O: weather name + description
     O->>M: tools/list (paginated)
     M-->>O: tool catalog held by SDK
-    O->>L: skill summaries + native loader functions
+    O->>L: skill summaries + skill-loading functions
     L->>O: load_skill("weather")
     O->>M: resources/read skill://weather/SKILL.md
     M-->>O: instructions + tool names
-    O->>L: loaded weather instructions
-    L->>O: weather native load_tool (forecast)
-    O->>L: register forecast function and schema for next iteration
+    Note over O: Successful load triggers provider registration via add_tools
+    O->>L: instructions + all weather descriptions/schemas for next iteration
     L->>O: invoke registered forecast function (hours=24)
     O->>M: tools/call weather_forecast {"hours":24}
     M->>D: GET current weather data
@@ -163,25 +163,26 @@ sequenceDiagram
     L-->>O: final answer
 ```
 
-Skill-first selection is model guidance, not authorization or an atomic
-load-and-register operation. A model can invoke native loaders directly.
-Calling a provider's native `list_mcp_tools` reveals that provider's advertised
-catalog; named-tool guidance normally avoids this. Configured endpoints,
-provider prefixes, and native tool approval policy remain separate from
-skill instructions. Every tool published by a configured provider is eligible
-for native loading; no duplicate host-side tool-name list is maintained.
-The SDK's mutable progressive-tool state has an isolated
-lifetime rather than being shared between concurrent users. The small `NativeMCPToolsMiddleware`
-supplies per-invocation native runtime tool objects using public APIs. It does
-not select operations or implement loading or dispatch. Shared MCP connections
-remain open for app lifetime; tool objects remain alive through their response
-streams. See the [skills advisor README](src/ski-advisor-skill/README.md#tool-lifetime-and-approval).
+The host binds skills to configured providers and adds their entire native
+catalog only after a successful skill load. This association is application
+glue, not automatic dependency resolution built into `SkillsProvider`, and not
+authorization. No per-provider list/load/unload functions are exposed to the
+model. Every tool published by a selected provider becomes available, with no
+duplicate host-side tool-name list. The model still chooses what to execute.
+
+Configured endpoints, provider prefixes, and native approval policy remain
+separate from skill instructions. Connections and native catalogs are shared
+for app lifetime, but `add_tools` modifies only the current invocation.
+Registrations remain available through streaming and disappear at the end of
+the run; followups load the skill again. No mutable per-tool-loader state is
+shared between users. See the
+[skills advisor README](src/ski-advisor-skill/README.md#tool-lifetime-and-approval).
 
 For genuinely small catalogs, eager loading with the standard SDK avoids this
-progressive-state middleware entirely. The resort's twelve tools illustrate a
+skill-registration hook entirely. The resort's twelve tools illustrate a
 larger-catalog pattern, not a requirement to defer every small set of schemas.
 See the [measured comparison](BLOG_DISTRIBUTED_AGENT_SKILLS.md#what-changed-in-latency-and-tokens)
-for actual model-call counts, latency, whole-system tokens, and limitations.
+for model-call counts, latency, whole-system tokens, and limitations.
 
 ---
 
