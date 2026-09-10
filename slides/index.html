@@ -316,8 +316,8 @@ advisorAgent.PublishAsHostedAgent(project);
           </section>
 
           <section>
-            <h2>Demo: AlpineAI architecture</h2>
-            <p class="lead center-text">The frontend talks to three entry points; the advisor experiences invoke the same shared specialist and research agents.</p>
+            <h2>Demo: original A2A architecture</h2>
+            <p class="lead center-text">The .NET advisor invokes Python/.NET specialists and a Foundry researcher. The skills alternative follows later.</p>
             <div class="architecture-schema">
               <div class="arch-node frontend">
                 <strong>Frontend</strong>
@@ -334,7 +334,7 @@ advisorAgent.PublishAsHostedAgent(project);
               <div class="arch-middle">
                 <div class="arch-node">
                   <strong>Data Generator</strong>
-                  <span>Python / FastAPI</span>
+                  <span>Go / HTTP</span>
                   <small>synthetic resort telemetry</small>
                 </div>
                 <div class="arch-node advisor">
@@ -450,7 +450,7 @@ app.MapFoundryResponses();
             <h2>Voice advisor</h2>
             <div class="split">
               <div>
-                <p class="lead">The voice agent is a WebSocket bridge to Voice Live, but it reuses the same specialist agents as tools.</p>
+                <p class="lead">The A2A voice route is a WebSocket bridge to Voice Live, reusing the specialist agents as tools.</p>
                 <div class="value-grid">
                   <div><strong>Browser</strong><span>streams audio over <code>/ws/voice</code></span></div>
                   <div><strong>Voice Live</strong><span>handles realtime speech turns</span></div>
@@ -488,12 +488,26 @@ foreach (var tool in functionTools)
               </code></pre>
             </div>
             <p class="source">Source: <code>src/voice-advisor-agent/Program.cs</code>, <code>VoiceWebSocketHandler.cs</code></p>
+            <aside class="notes">This slide shows the original A2A voice route. The separate skills voice route exposes only the Python skills advisor's A2A adapter. Both keep the existing conversation identity. The native MCP change is inside the skills advisor, not the voice bridge.</aside>
           </section>
 
           <section class="section-title demo">
             <p class="eyebrow">Architecture evolution</p>
             <h2>From agent as a tool to agent as a skill</h2>
-            <p class="subtitle">Keep the specialist boundary and distributed execution—remove the second model hop.</p>
+            <p class="subtitle">Keep domain services remote. Move instructions into the advisor. Tools stay tools.</p>
+            <aside class="notes">We are changing the reasoning boundary, not replacing A2A universally. The skills provider has no specialist model loop. The advisor still uses multiple model iterations.</aside>
+          </section>
+
+          <section>
+            <h2>A small demo of a larger catalog</h2>
+            <div class="value-grid">
+              <div><strong>Four skills, twelve tools</strong><span>select a skill, expose its provider's complete tool group</span></div>
+              <div><strong>Independent language choices</strong><span>Python skills advisor; .NET MCP providers; no required language rewrite</span></div>
+              <div><strong>Small real catalog?</strong><span>load provider tools upfront with the standard SDK</span></div>
+              <div><strong>Progressive registration</strong><span>native MAF capability, not a Foundry Toolbox</span></div>
+            </div>
+            <p class="takeaway">For a small catalog, eager loading avoids the skill-to-provider hook entirely.</p>
+            <aside class="notes">The original A2A advisor is .NET with Python and .NET specialists. Twelve tools do not inherently justify progressive loading. This simple resort illustrates a more complex catalog scenario. With eager tool exposure, skill instructions can still load on demand. These are alternative SDK compositions, not runtime compatibility modes in this demo.</aside>
           </section>
 
           <section>
@@ -503,101 +517,129 @@ foreach (var tool in functionTools)
                 <tr><th></th><th>Agent as a tool</th><th>Agent as a skill</th></tr>
               </thead>
               <tbody>
-                <tr><td><strong>Discover</strong></td><td>A2A Agent Card becomes a function</td><td>MCP index advertises a skill description</td></tr>
-                <tr><td><strong>Load context</strong></td><td>Start the specialist agent</td><td>Load the selected <code>SKILL.md</code></td></tr>
-                <tr><td><strong>Choose operation</strong></td><td>Specialist model chooses its tool</td><td>Advisor model chooses a skill resource</td></tr>
-                <tr><td><strong>Execute</strong></td><td>Tool runs behind the specialist</td><td>Dynamic resource runs on the MCP server</td></tr>
-                <tr><td><strong>Model calls</strong></td><td>Advisor + specialist</td><td>Advisor only</td></tr>
+                <tr><td><strong>Host</strong></td><td>Specialist A2A service</td><td>Domain MCP provider</td></tr>
+                <tr><td><strong>Discover</strong></td><td>Agent Card name / description</td><td>Skill discovery metadata</td></tr>
+                <tr><td><strong>Instructions</strong></td><td>Specialist system prompt</td><td>Enriched <code>SKILL.md</code> in advisor context</td></tr>
+                <tr><td><strong>Choose tools</strong></td><td>Specialist model</td><td>Advisor model, from the selected skill's full tool descriptions</td></tr>
+                <tr><td><strong>Execute</strong></td><td>Tools behind the A2A agent</td><td>Typed MCP tools over remote domain services</td></tr>
               </tbody>
             </table>
-            <p class="takeaway">“Agent as a skill” maps the agent's bounded context to a portable skill; it does not put an agent inside the skill.</p>
+            <p class="takeaway">Move instructions and reasoning, not business logic. Authentication and transport do not become prose.</p>
+            <aside class="notes">The Agent Card's descriptive identity helps select a competence; other card fields remain infrastructure concerns. The former system prompt supplies domain rules and procedures. The actual generated SKILL.md adds MAF-specific tool-loading guidance, so it is not a verbatim host-neutral example. There is no model inside the four MCP providers. The researcher remains an agent tool.</aside>
           </section>
 
           <section>
-            <h2>The remote skill contract</h2>
+            <h2>Keep the three contracts distinct</h2>
+            <div class="stacked-cards">
+              <div><strong>Core MCP</strong><span><code>resources/read</code>, <code>tools/list</code>, <code>tools/call</code></span></div>
+              <div><strong>Skill transport profile</strong><span>demo uses pinned historical SEP-2640 Draft / index-based discovery</span></div>
+              <div><strong>Native MAF progressive API</strong><span>experimental in core 1.17.0; selected functions appear next iteration</span></div>
+            </div>
+            <p class="source">Checked September 10, 2026: latest SEP text says Accepted; PR still unmerged and newer discovery differs. Pinned sources are in the blog.</p>
+            <aside class="notes">The implemented historical draft is b3f015a7929041dada4b0eaf5a657b30d4f5d6d1. The newer d6b31a03504c15677d49b922b6b6ace0ef65728d proposal text is marked Accepted and specifies skills/list and skills/get, which this demo does not implement. Do not claim the latest text is still Draft or equate an unmerged proposal with a released core MCP requirement. See modelcontextprotocol/modelcontextprotocol PR 2640 for current status.</aside>
+          </section>
+
+          <section>
+            <h2>Instruction resources + typed tools</h2>
             <div class="split">
               <div>
-                <p class="lead">Each .NET MCP service publishes three progressive layers.</p>
                 <div class="value-grid">
                   <div><strong>Advertise</strong><span><code>skill://index.json</code><br />name + description</span></div>
                   <div><strong>Load</strong><span><code>skill://weather/SKILL.md</code><br />domain instructions</span></div>
-                  <div><strong>Act</strong><span><code>skill://weather/forecast/{hours}</code><br />dynamic resource</span></div>
-                  <div><strong>Ground</strong><span>resource handler calls live APIs and services</span></div>
+                  <div><strong>Discover tools</strong><span><code>tools/list</code><br />authoritative schemas</span></div>
+                  <div><strong>Execute</strong><span><code>tools/call</code><br />existing domain services</span></div>
                 </div>
               </div>
               <pre><code class="language-csharp" data-trim>
-[McpServerResourceType]
-public sealed class WeatherSkillResources(
-    WeatherDataService weather)
-{
-    [McpServerResource(
-        UriTemplate =
-            "skill://weather/forecast/{hours}",
-        MimeType = "application/json")]
-    public Task&lt;string&gt; GetForecast(int hours) =&gt;
-        weather.GetForecastAsync(hours);
-}
-              </code></pre>
-            </div>
-            <p class="takeaway">Reading a resource executes its handler remotely. The URI template carries the parameters.</p>
-          </section>
-
-          <section>
-            <h2>The advisor receives skills, not provider tools</h2>
-            <div class="split">
-              <pre><code class="language-csharp" data-trim>
 builder.Services.AddMcpServer()
     .WithHttpTransport()
-    .WithResources&lt;WeatherSkillResources&gt;();
+    .WithResources&lt;WeatherSkillResources&gt;()
+    .WithTools&lt;WeatherTools&gt;();
 
 app.MapMcp("/skillsmcp");
               </code></pre>
-              <pre><code class="language-python" data-trim>
-sources.append(
-    MCPSkillsSource(client=mcp_session))
-
-skills = SkillsProvider(
-    AggregatingSkillsSource(sources))
-
-agent = client.as_agent(
-    name="skiadvisorskill",
-    context_providers=[skills, history],
-    tools=[ski_researcher.as_tool(...)])
-              </code></pre>
             </div>
-            <p class="takeaway">MAF adds only <code>load_skill</code> and <code>read_skill_resource</code>; domain operations stay behind MCP resources.</p>
+            <p class="takeaway">Resources are instructional. Operations use typed MCP tools, with no specialist model loop.</p>
+            <aside class="notes">Each current provider has exactly index.json and canonical SKILL.md as resources. Weather tools are weather_current_conditions, weather_forecast and weather_storm_status. Input/output schemas come from the MCP catalog, not a second handwritten operation manifest. Forecast validates hours from 1 through 24 and delegates to the existing domain service.</aside>
           </section>
 
           <section>
-            <h2>Progressive disclosure over the network</h2>
-            <div class="agent-map">
-              <div class="agent-kind">1. Discover</div>
-              <div class="agent-arrow"><span>MCP resources/read</span></div>
-              <div class="agent-client"><code>skill://index.json</code></div>
-              <div class="agent-arrow compact"><span>returns</span></div>
-              <div class="agent-target">brief descriptions</div>
-
-              <div class="agent-kind">2. Select</div>
-              <div class="agent-arrow"><span>model calls</span></div>
-              <div class="agent-client"><code>load_skill("weather")</code></div>
-              <div class="agent-arrow compact"><span>reads</span></div>
-              <div class="agent-target"><code>SKILL.md</code></div>
-
-              <div class="agent-kind">3. Act</div>
-              <div class="agent-arrow"><span>model calls</span></div>
-              <div class="agent-client"><code>read_skill_resource</code></div>
-              <div class="agent-arrow compact"><span>reads</span></div>
-              <div class="agent-target"><code>forecast/24</code></div>
-
-              <div class="agent-kind">4. Execute</div>
-              <div class="agent-arrow"><span>MCP binds URI</span></div>
-              <div class="agent-client"><code>GetForecast(24)</code></div>
-              <div class="agent-arrow compact"><span>HTTP</span></div>
-              <div class="agent-target">live resort data</div>
+            <h2>Native MAF composition</h2>
+            <div class="split">
+              <pre><code class="language-python" data-trim>
+skill_tools = SkillToolsMiddleware(connections)
+skills = SkillsProvider(
+    skill_tools.source,
+    disable_load_skill_approval=True,
+    disable_read_skill_resource_approval=True,
+)
+              </code></pre>
+              <pre><code class="language-python" data-trim>
+MCPStreamableHTTPTool(
+    name="weather",
+    url=weather_url,
+    session=weather_session,
+    tool_name_prefix="weather",
+    load_prompts=False,
+    use_progressive_disclosure=False,
+    approval_mode="never_require",
+)
+              </code></pre>
             </div>
-            <p class="takeaway">A dynamic resource is tool-like operationally, but selected through skill instructions instead of a function schema.</p>
+            <p class="takeaway">Keep native functions host-side. Register a provider's group only after its skill loads.</p>
+            <aside class="notes">These are shortened configuration excerpts, not the complete shared builder. False disables native per-tool loading helpers; it does not expose all functions initially because these MCP objects are not registered in the agent's initial tools. A function-invocation hook uses public add_tools after a successful skill read. The configured providers' catalogs are authoritative, with no duplicate name list. MAF discovers paginated tools/list upfront. Initial context contains skill summaries/loading helpers, advisor instructions and the researcher. The trusted read-only provider tools use never_require; adding write tools requires reconsidering that policy. This SDK capability is not Foundry-only.</aside>
           </section>
 
+          <section>
+            <h2>Select the skill, expose its tool group</h2>
+            <pre class="wide-code"><code class="language-plaintext" data-trim>
+load_skill({"skill_name":"weather"})
+  -> native skill read succeeds
+  -> host hook: add_tools(all weather functions)
+  -> all 3 descriptions/schemas on NEXT model iteration
+
+weather_weather_forecast({"hours":6})
+  -> MCP tools/call: weather_forecast
+  -> remote domain service returns structured data
+            </code></pre>
+            <p class="takeaway">The host chooses the group; the model chooses what to execute. Loading is not execution.</p>
+            <aside class="notes">Each provider currently hosts one skill. A successful load_skill triggers our small skill-to-provider binding, not automatic behavior built into SkillsProvider. It registers that provider's full native catalog with FunctionInvocationContext.add_tools for the next iteration. All tool descriptions and input schemas are then available for operation selection; no separate loader model call is needed. Other providers remain hidden. Failed skill reads must not add tools. Prefixes isolate providers: the repeated weather_ is intentional. This is context exposure, not authorization; no custom operation dispatcher is involved.</aside>
+          </section>
+
+          <section>
+            <h2>Shared connections, request-local tools</h2>
+            <div class="value-grid">
+              <div><strong>Reusable MCP connections</strong><span>open for app lifetime; AsyncExitStack handles cleanup</span></div>
+              <div><strong>Per-invocation registrations</strong><span>tool groups stay out of other users' requests</span></div>
+              <div><strong>Small integration hook</strong><span>successful skill read maps to its configured provider catalog</span></div>
+              <div><strong>SDK remains in control</strong><span>add_tools, descriptions, schemas, MCP dispatch, approvals</span></div>
+            </div>
+            <p class="takeaway">Run ends: registrations disappear. Shared MCP connections and conversation history remain.</p>
+            <aside class="notes">The native_mcp.py hook implements the skill-to-provider association through public APIs. MCP sessions and native catalog functions are app-owned; add_tools changes only the current run, not the shared agent or mutable loaded-name state. Registrations remain through streaming and are discarded on completion, failure or cancellation. Followups load their skills again. This does not send a remote unload command. Native never_require and automatic function invocation handle read-only provider operations. SkillsProvider's native disable_load_skill_approval and disable_read_skill_resource_approval settings make instruction reads automatic too, avoiding approval/resumption boundaries. There is no custom approval/resumption engine. For small catalogs, directly register all native MCP tools and omit the hook.</aside>
+          </section>
+
+          <section>
+            <h2>Measured comparison</h2>
+            <p><code>considering weather and waiting time, where should i start?</code></p>
+            <table class="transport-table benchmark-table">
+              <thead>
+                <tr><th>Pair</th><th>Architecture</th><th>Elapsed</th><th>Input</th><th>Output</th><th>Total</th><th>Model calls</th><th>Cached input</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>1</td><td>A2A specialists</td><td>16.416 s</td><td>2,971</td><td>578</td><td>3,549</td><td>6</td><td>Partial*</td></tr>
+                <tr><td>1</td><td>Native MCP skills</td><td>8.661 s</td><td>4,341</td><td>178</td><td>4,519</td><td>3</td><td>1,536</td></tr>
+                <tr><td>2</td><td>Native MCP skills</td><td>5.866 s</td><td>4,337</td><td>165</td><td>4,502</td><td>3</td><td>1,536</td></tr>
+                <tr><td>2</td><td>A2A specialists</td><td>12.835 s</td><td>2,974</td><td>580</td><td>3,554</td><td>6</td><td>Partial*</td></tr>
+                <tr><td>3</td><td>A2A specialists</td><td>17.188 s</td><td>3,394</td><td>637</td><td>4,031</td><td>7</td><td>Partial*</td></tr>
+                <tr><td>3</td><td>Native MCP skills</td><td>4.517 s</td><td>4,341</td><td>171</td><td>4,512</td><td>3</td><td>3,072</td></tr>
+              </tbody>
+            </table>
+            <p class="takeaway">Mean: 15.480 s A2A vs 6.348 s skills. Skills used about 22% more total tokens, not a billable-cost ratio.</p>
+            <p class="source">September 10, 2026, 13:03-13:09 UTC; code 56f453a. Fresh conversations, reused processes, 65s+ cooldown. Whole-system model leaves. *A2A specialist cache unknown; native cache included in input.</p>
+            <aside class="notes">This is the same six-row evidence as BLOG_DISTRIBUTED_AGENT_SKILLS.md. Wall time runs from frontend POST to SSE body exhaustion, not first token. All six requests used the displayed prompt with no previous response ID/history, alternating A2A/skills order. Total tokens across three runs: A2A 11,134; skills 13,533. Native cached input totals 6,144, already included in input. A2A advisor cache is zero but specialist counters are absent. Skills consistently used three model calls: batched skill loads with automatic provider-group registration, direct tools, final answer. A2A used six, six and seven model leaves including specialists. All six recommended Eagle Chair. A2A made two lift queries rather than one; pair 3 also consulted the coach and asked about ability. Native responses and the first A2A response used safety language without consulting the safety provider. Processes were reused, prompt caches varied, and first A2A/skills requests included roughly one-second managed-identity probes. All responses completed without benchmark retries or failing model leaves; credential-probe and queue-shutdown errors remain in the evidence. This is not a controlled latency, cost, or quality study. Do not double-count aggregate invoke_agent/API usage.</aside>
+            <!-- Optional A2A screenshot: pair-3 trace 6f8083fd86ac2ee454f9b9f7477ecb86, including coach. -->
+            <!-- Measurement code: 56f453a. Private evidence: skill-group-benchmark/reconciled-summary.json. -->
+            <!-- Optional skills screenshot: pair-3 host trace b6f726e3dd6262cc440f44cdbad85367, three model calls with no per-tool loaders. Weather 1b458a45fea5eebaf38506b4ff504ffc and lift dad07300af041f4d462bb6f91da520e9 are separate provider traces correlated by destination/time, not a connected parent tree. Omit auth tokens. -->
           </section>
         </section>
 

@@ -3,8 +3,8 @@
 Resolves, for each skill-backed specialist domain (weather, safety, ski-coach,
 lift-traffic), the streamable-HTTP MCP endpoint of a
 *skill-provider* resource that publishes SEP-2640 Agent Skills
-(``skill://index.json`` + ``skill://<name>/SKILL.md``) and live sibling
-resources read through those skills.
+(``skill://index.json`` + ``skill://<name>/SKILL.md``). Native progressive MCP
+tools provide live operations; resources contain instruction documents only.
 
 All four skill-provider implementations are owned and built in .NET (this
 project never implements a skill-provider server itself, only the MCP

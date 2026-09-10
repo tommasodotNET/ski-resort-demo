@@ -6,7 +6,7 @@
     <NoWarn>$(NoWarn);MCPEXP001</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <!-- MCP server hosting: exposes SEP-2640 discovery, SKILL.md, and live sibling resources. -->
+    <!-- MCP hosting: instructional skill resources and typed tools for native progressive disclosure. -->
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.2.0" />
   </ItemGroup>
   <ItemGroup>

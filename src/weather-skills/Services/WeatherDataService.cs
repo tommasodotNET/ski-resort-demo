@@ -8,9 +8,9 @@ namespace WeatherSkill.Dotnet.Services;
 /// </summary>
 /// <remarks>
 /// This is a faithful .NET port of <c>weather-agent-a2a</c>'s <c>WeatherService</c>
-/// (<c>services/weather_service.py</c>): same data-generator endpoint (<c>/api/weather</c>), same fallback
-/// values on failure, same forecast/storm-assessment rules. The existing Python A2A agent is left untouched;
-/// this service backs a new, additive MCP skill-provider server.
+/// (<c>services/weather_service.py</c>): same data-generator endpoint (<c>/api/weather</c>) and
+/// forecast/storm-assessment rules. The existing Python A2A agent is left untouched.
+/// Upstream errors, malformed responses, and cancellation propagate to the MCP tool caller.
 /// </remarks>
 public class WeatherDataService
 {
@@ -37,11 +37,9 @@ public class WeatherDataService
     }
 
     /// <summary>
-    /// Fetches current weather conditions as a parsed JSON object. Mirrors
-    /// <c>WeatherService.get_current_conditions</c>: on failure, returns the same fallback shape
-    /// (fixed temperature/wind/snow/visibility values plus an "error" field) instead of throwing.
+    /// Fetches and validates current weather conditions as a parsed JSON object.
     /// </summary>
-    public async Task<JsonObject> GetCurrentConditionsAsync()
+    public async Task<JsonObject> GetCurrentConditionsAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -49,33 +47,30 @@ public class WeatherDataService
 
             _logger.LogInformation("Fetching current weather conditions from {Url}/api/weather", DataGeneratorUrl);
 
-            var response = await httpClient.GetAsync("/api/weather");
+            using var response = await httpClient.GetAsync("/api/weather", cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("Retrieved weather data: {Content}", content);
 
-            return JsonNode.Parse(content) as JsonObject ?? new JsonObject();
+            var conditions = JsonNode.Parse(content) as JsonObject
+                ?? throw new JsonException("Expected a weather object.");
+            foreach (var field in new[] { "temperature", "wind_speed", "snow_intensity", "visibility" })
+                _ = (conditions[field] ?? throw new JsonException($"Missing weather field: {field}.")).GetValue<double>();
+            _ = (conditions["timestamp"] ?? throw new JsonException("Missing weather timestamp.")).GetValue<string>();
+            return conditions;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error fetching current weather conditions");
-            return new JsonObject
-            {
-                ["temperature"] = -5.0,
-                ["wind_speed"] = 15.0,
-                ["snow_intensity"] = 1,
-                ["visibility"] = 5000,
-                ["timestamp"] = "unavailable",
-                ["error"] = ex.Message
-            };
+            throw;
         }
     }
 
-    /// <summary>Same as <see cref="GetCurrentConditionsAsync"/>, serialized to indented JSON for resource output.</summary>
-    public async Task<string> GetCurrentConditionsJsonAsync()
+    /// <summary>Same as <see cref="GetCurrentConditionsAsync"/>, serialized for the typed tool adapter.</summary>
+    public async Task<string> GetCurrentConditionsJsonAsync(CancellationToken cancellationToken = default)
     {
-        var conditions = await GetCurrentConditionsAsync();
+        var conditions = await GetCurrentConditionsAsync(cancellationToken);
         return conditions.ToJsonString(SerializerOptions);
     }
 
@@ -83,13 +78,13 @@ public class WeatherDataService
     /// Projects current conditions forward by <paramref name="hours"/> (clamped 1-24) with small random hourly
     /// variations. Mirrors <c>WeatherService.get_forecast</c> exactly, including the same variation ranges.
     /// </summary>
-    public async Task<string> GetForecastAsync(int hours)
+    public async Task<string> GetForecastAsync(int hours, CancellationToken cancellationToken = default)
     {
         hours = Math.Clamp(hours, 1, 24);
 
         try
         {
-            var current = await GetCurrentConditionsAsync();
+            var current = await GetCurrentConditionsAsync(cancellationToken);
 
             var baseTemp = current["temperature"]?.GetValue<double>() ?? -5.0;
             var baseWind = current["wind_speed"]?.GetValue<double>() ?? 15.0;
@@ -123,15 +118,10 @@ public class WeatherDataService
 
             return result.ToJsonString(SerializerOptions);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error generating forecast");
-            return new JsonObject
-            {
-                ["error"] = ex.Message,
-                ["forecast_hours"] = hours,
-                ["hourly_forecast"] = new JsonArray()
-            }.ToJsonString(SerializerOptions);
+            throw;
         }
     }
 
@@ -139,11 +129,11 @@ public class WeatherDataService
     /// Assesses whether a storm is incoming, based on current conditions. Mirrors
     /// <c>WeatherService.is_storm_incoming</c> exactly, including its thresholds and wording.
     /// </summary>
-    public async Task<string> IsStormIncomingAsync()
+    public async Task<string> IsStormIncomingAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var current = await GetCurrentConditionsAsync();
+            var current = await GetCurrentConditionsAsync(cancellationToken);
 
             var windSpeed = current["wind_speed"]?.GetValue<double>() ?? 0;
             var snowIntensity = current["snow_intensity"]?.GetValue<double>() ?? 0;
@@ -216,15 +206,10 @@ public class WeatherDataService
 
             return result.ToJsonString(SerializerOptions);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Error assessing storm conditions");
-            return new JsonObject
-            {
-                ["storm_incoming"] = false,
-                ["reason"] = $"Unable to assess storm conditions: {ex.Message}",
-                ["error"] = ex.Message
-            }.ToJsonString(SerializerOptions);
+            throw;
         }
     }
 }
