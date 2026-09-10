@@ -1,4 +1,4 @@
-"""Offline tests of the real MAF skills/progressive-MCP/automatic invocation loop."""
+"""Offline tests of the real MAF skill selection and native invocation loop."""
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +10,10 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from agent_framework import (
-    Agent, AgentSession, AggregatingSkillsSource, BaseChatClient, ChatMiddlewareLayer,
-    ChatResponse, ChatResponseUpdate, Content, FunctionInvocationLayer, MCPSkillsSource,
-    Message, ResponseStream, SkillsProvider, ToolApprovalMiddleware,
+    Agent, AgentSession, BaseChatClient, ChatMiddlewareLayer,
+    ChatResponse, ChatResponseUpdate, Content, FunctionInvocationLayer,
+    FunctionInvocationContext, Message, ResponseStream, SkillsProvider,
+    tool,
 )
 from mcp import ClientSession
 from mcp.types import (
@@ -22,7 +23,7 @@ from mcp.types import (
 
 from skills_orchestrator_python.agent_builder import INSTRUCTIONS
 from skills_orchestrator_python.config import SkillProviderConfig
-from skills_orchestrator_python.native_mcp import NativeMCPToolsMiddleware, SkillConnection
+from skills_orchestrator_python.native_mcp import SkillToolsMiddleware, SkillConnection
 
 
 INPUT_SCHEMA = {
@@ -72,7 +73,14 @@ class FakeMCP:
     def __init__(self, skill="weather", prefix="weather", operation="weather_forecast"):
         self.skill, self.prefix, self.operation = skill, prefix, operation
         self.reads, self.calls, self.cursors = [], [], []
+        self.skill_error = None
+        self.skill_text = (
+            f"---\nname: {skill}\ndescription: {skill} domain\n---\n"
+            "After successful load_skill all provider tools are registered for the next "
+            "model iteration. Choose according to descriptions and parameter schemas."
+        )
         self.session = ClientSession(None, None)
+        # Fake only the SDK transport/initialization, never the native MAF wrappers.
         self.session._request_id = 1
         self.session._server_capabilities = ServerCapabilities(
             tools=ToolsCapability(), resources=ResourcesCapability(),
@@ -85,8 +93,10 @@ class FakeMCP:
         self.pages = {None: ListToolsResult(tools=[
             Tool(name=operation, description="Full authoritative forecast schema",
                  inputSchema=INPUT_SCHEMA, outputSchema={"type": "object"}),
-            Tool(name="hidden_operation", description="Additional provider-advertised read-only operation",
-                 inputSchema=ADDITIONAL_INPUT_SCHEMA),
+            Tool(name=f"{prefix}_current_conditions", description="Current resort conditions",
+                 inputSchema={"type": "object", "properties": {}}),
+            Tool(name=f"{prefix}_storm_status", description="Authoritative storm status",
+                 inputSchema={"type": "object", "properties": {}}),
         ])}
         self.connection = SkillConnection(
             SkillProviderConfig(prefix, prefix),
@@ -110,11 +120,9 @@ class FakeMCP:
                     "type": "skill-md", "url": f"skill://{self.skill}/SKILL.md",
                 }]})
             elif uri == f"skill://{self.skill}/SKILL.md":
-                text = (
-                    f"---\nname: {self.skill}\ndescription: {self.skill} domain\n---\n"
-                    f'Use {self.prefix}_load_tool with {{"tool":"{self.operation}"}}; '
-                    f"then call {self.prefix}_{self.operation} on the next iteration."
-                )
+                if self.skill_error:
+                    raise self.skill_error
+                text = self.skill_text
             else:
                 raise ValueError("Only instruction resources exist")
             return ReadResourceResult(contents=[TextResourceContents(uri=uri, text=text)])
@@ -126,84 +134,103 @@ class FakeMCP:
         raise AssertionError(f"Unexpected MCP method: {request.method}")
 
 
-def make_agent(connections, steps):
-    sources = [MCPSkillsSource(client=connection.session) for connection in connections]
-    skills = SkillsProvider(sources[0] if len(sources) == 1 else AggregatingSkillsSource(sources))
+@tool
+async def ski_researcher_agent(query: str) -> str:
+    """Research general skiing."""
+    return query
+
+
+async def make_agent(connections, steps, stack, *, auto_approve=True):
+    registration = SkillToolsMiddleware(connections)
     client = ScriptedClient(steps)
+    middleware = [registration]
     agent = Agent(
-        client, instructions=INSTRUCTIONS, context_providers=[skills],
-        middleware=[
-            ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule]),
-            NativeMCPToolsMiddleware(connections),
-        ],
+        client, instructions=INSTRUCTIONS, tools=[ski_researcher_agent],
+        context_providers=[SkillsProvider(
+            registration.source,
+            disable_load_skill_approval=auto_approve,
+            disable_read_skill_resource_approval=auto_approve,
+        )], middleware=middleware,
     )
+    await registration.initialize(agent, stack)
     return agent, client
 
 
 def native_steps(fixture):
     return [
         call("load_skill", {"skill_name": fixture.skill}),
-        call(f"{fixture.prefix}_load_tool", {"tool": fixture.operation}),
         call(f"{fixture.prefix}_{fixture.operation}", {"hours": 2}),
         Message("assistant", ["done"]),
     ]
 
 
+def names(options):
+    return {t.name for t in options["tools"]}
+
+
 class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.stack = await self.enterAsyncContext(AsyncExitStack())
         self.weather = FakeMCP()
         self.safety = FakeMCP("safety", "safety", "safety_risk")
         self.connections = [self.weather.connection, self.safety.connection]
 
-    async def test_native_skill_load_then_tool_load_then_direct_call(self):
+    def assert_no_helpers(self, options):
+        for name in names(options):
+            self.assertFalse(name.endswith(("_load_tool", "_unload_tool", "_list_mcp_tools")), name)
+
+    def assert_catalog(self, options, fixture):
+        exposed = {t.name: t for t in options["tools"]}
+        for page in fixture.pages.values():
+            for advertised in page.tools:
+                native = exposed[f"{fixture.prefix}_{advertised.name}"]
+                self.assertEqual(native.parameters(), advertised.inputSchema)
+                self.assertEqual(native.description, advertised.description)
+                self.assertEqual(native.approval_mode, "never_require")
+        self.assert_no_helpers(options)
+
+    async def test_successful_skill_load_exposes_all_three_native_schemas_then_direct_call(self):
         def initial(messages, options):
             text = json.dumps([m.to_dict() for m in messages]) + str(options.get("instructions"))
-            for operation in ("weather_forecast", "safety_risk", "hidden_operation"):
-                self.assertNotIn(operation, text)
-                self.assertNotIn(operation, json.dumps([t.parameters() for t in options["tools"]]))
-            names = {t.name for t in options["tools"]}
-            self.assertIn("weather_load_tool", names)
-            self.assertIn("safety_load_tool", names)
-            self.assertNotIn("weather_weather_forecast", names)
-            self.assertIn("load_skill", names)
+            schemas = json.dumps([t.to_dict() for t in options["tools"]])
+            for fixture in (self.weather, self.safety):
+                for advertised in fixture.pages[None].tools:
+                    self.assertNotIn(advertised.name, text)
+                    self.assertNotIn(advertised.name, schemas)
+                    self.assertNotIn(advertised.description, schemas)
+            self.assertEqual(names(options), {
+                "load_skill", "read_skill_resource", "run_skill_script", "ski_researcher_agent",
+            })
+            self.assertNotIn('"hours"', schemas)
+            self.assert_no_helpers(options)
             return call("load_skill", {"skill_name": "weather"})
 
-        def skill_loaded(messages, options):
-            text = json.dumps([m.to_dict() for m in messages])
-            self.assertIn("weather_forecast", text)
-            self.assertNotIn("safety_risk", text)
-            self.assertNotIn("weather_weather_forecast", {t.name for t in options["tools"]})
-            return call("weather_load_tool", {"tool": "weather_forecast"})
-
-        def operation_loaded(messages, options):
-            tools = {t.name: t for t in options["tools"]}
-            self.assertIn("weather_weather_forecast", tools)
-            self.assertNotIn("safety_safety_risk", tools)
-            self.assertNotIn("weather_hidden_operation", tools)
-            self.assertEqual(tools["weather_weather_forecast"].parameters(), INPUT_SCHEMA)
+        def loaded(messages, options):
+            self.assert_catalog(options, self.weather)
+            self.assertFalse(any(n.startswith("safety_") for n in names(options)))
             return call("weather_weather_forecast", {"hours": 2})
 
-        agent, _ = make_agent(self.connections, [
-            initial, skill_loaded, operation_loaded, Message("assistant", ["done"]),
-        ])
+        agent, _ = await make_agent(self.connections, [
+            initial, loaded, Message("assistant", ["done"]),
+        ], self.stack)
         response = await agent.run("forecast", session=agent.create_session())
         self.assertEqual(response.text, "done")
         self.assertFalse(any(c.type == "function_approval_request"
                              for m in response.messages for c in m.contents))
         self.assertEqual(self.weather.calls, [("weather_forecast", {"hours": 2})])
         self.assertEqual(self.safety.calls, [])
-        self.assertTrue(all(uri in {"skill://index.json", "skill://weather/SKILL.md"}
-                            for uri in self.weather.reads))
+        self.assertEqual(self.weather.reads, ["skill://index.json", "skill://weather/SKILL.md"])
+        self.assertEqual(self.safety.reads, ["skill://index.json"])
 
     async def test_native_streaming_loop(self):
-        agent, _ = make_agent(self.connections, native_steps(self.weather))
+        agent, _ = await make_agent(self.connections, native_steps(self.weather), self.stack)
         updates = [u async for u in agent.run("forecast", session=agent.create_session(), stream=True)]
         self.assertTrue(any(u.text == "done" for u in updates))
         self.assertFalse(any(c.type == "function_approval_request" for u in updates for c in u.contents))
         self.assertEqual(len(self.weather.calls), 1)
 
-    async def test_followup_and_restored_session_reload_native_tools(self):
-        agent, client = make_agent(self.connections, native_steps(self.weather))
+    async def test_followup_and_restored_history_start_hidden_then_reload(self):
+        agent, client = await make_agent(self.connections, native_steps(self.weather), self.stack)
         session = agent.create_session()
         await agent.run("first", session=session)
         for restore in (False, True):
@@ -211,16 +238,17 @@ class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
                 session = AgentSession.from_dict(session.to_dict())
 
             def fresh(messages, options):
-                self.assertNotIn("weather_weather_forecast", {t.name for t in options["tools"]})
+                self.assertNotIn("weather_weather_forecast", names(options))
+                self.assert_no_helpers(options)
                 return call("load_skill", {"skill_name": "weather"}, "reload")
 
             client.steps = [fresh, *native_steps(self.weather)[1:]]
             self.assertEqual((await agent.run("followup", session=session)).text, "done")
         self.assertEqual(len(self.weather.calls), 3)
+        self.assertEqual(self.weather.reads.count("skill://weather/SKILL.md"), 1)
 
-    async def test_parallel_users_do_not_share_native_loaded_tools(self):
-        loaded = asyncio.Event()
-        observed = asyncio.Event()
+    async def test_parallel_users_do_not_share_registrations(self):
+        loaded, observed = asyncio.Event(), asyncio.Event()
         counts = {"a": 0, "b": 0}
         test = self
 
@@ -232,23 +260,30 @@ class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
                     counts[user] += 1
                     if user == "a":
                         if step == 0:
-                            message = call("weather_load_tool", {"tool": "weather_forecast"})
+                            message = call("load_skill", {"skill_name": "weather"})
                         elif step == 1:
-                            test.assertIn("weather_weather_forecast", {t.name for t in options["tools"]})
+                            test.assert_catalog(options, test.weather)
+                            test.assertFalse(any(n.startswith("safety_") for n in names(options)))
                             loaded.set()
                             await observed.wait()
                             message = call("weather_weather_forecast", {"hours": 2})
                         else:
                             message = Message("assistant", ["a done"])
-                    else:
+                    elif step == 0:
                         await loaded.wait()
-                        test.assertNotIn("weather_weather_forecast", {t.name for t in options["tools"]})
+                        test.assertNotIn("weather_weather_forecast", names(options))
+                        message = call("load_skill", {"skill_name": "safety"})
+                    elif step == 1:
+                        test.assert_catalog(options, test.safety)
+                        test.assertNotIn("weather_weather_forecast", names(options))
                         observed.set()
+                        message = call("safety_safety_risk", {"hours": 2})
+                    else:
                         message = Message("assistant", ["b done"])
                     return ChatResponse(messages=[message])
                 return response()
 
-        agent, _ = make_agent(self.connections, [])
+        agent, _ = await make_agent(self.connections, [], self.stack)
         agent.client = ConcurrentClient()
         responses = await asyncio.wait_for(asyncio.gather(
             agent.run("a", session=agent.create_session()),
@@ -256,119 +291,161 @@ class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
         ), timeout=10)
         self.assertEqual([r.text for r in responses], ["a done", "b done"])
         self.assertEqual(len(self.weather.calls), 1)
+        self.assertEqual(len(self.safety.calls), 1)
 
-    async def test_parallel_native_operations_auto_invoke_without_approval(self):
+    async def test_parallel_skill_groups_and_repeated_load_are_idempotent(self):
         load = Message("assistant", [
-            Content.from_function_call("load-w", "weather_load_tool", arguments={"tool": "weather_forecast"}),
-            Content.from_function_call("load-s", "safety_load_tool", arguments={"tool": "safety_risk"}),
+            Content.from_function_call("w1", "load_skill", arguments={"skill_name": "weather"}),
+            Content.from_function_call("s1", "load_skill", arguments={"skill_name": "safety"}),
+            Content.from_function_call("w2", "load_skill", arguments={"skill_name": "WEATHER"}),
         ])
+
+        def loaded(messages, options):
+            self.assert_catalog(options, self.weather)
+            self.assert_catalog(options, self.safety)
+            self.assertEqual(len(names(options)), len(options["tools"]))
+            return call("load_skill", {"skill_name": "weather"})
+
         operations = Message("assistant", [
             Content.from_function_call("call-w", "weather_weather_forecast", arguments={"hours": 2}),
             Content.from_function_call("call-s", "safety_safety_risk", arguments={"hours": 2}),
         ])
-        agent, _ = make_agent(self.connections, [load, operations, Message("assistant", ["both done"])])
-        session = agent.create_session()
-        response = await agent.run("both", session=session)
+        agent, _ = await make_agent(self.connections, [
+            load, loaded, operations, Message("assistant", ["both done"]),
+        ], self.stack)
+        response = await agent.run("both", session=agent.create_session())
         self.assertEqual(response.text, "both done")
         self.assertFalse(any(c.type == "function_approval_request"
                              for m in response.messages for c in m.contents))
         self.assertEqual(len(self.weather.calls), 1)
         self.assertEqual(len(self.safety.calls), 1)
 
-    async def test_native_instances_close_on_success_failure_and_cancellation(self):
-        from skills_orchestrator_python import native_mcp
-        native_class = native_mcp.MCPStreamableHTTPTool
-        created = []
-
-        def create(**kwargs):
-            tool = native_class(**kwargs)
-            tool.close = AsyncMock(wraps=tool.close)
-            created.append(tool)
-            return tool
-
-        for outcome in ("success", "model failure", "cancel"):
-            with self.subTest(outcome=outcome):
-                created.clear()
-                steps = native_steps(self.weather)
-                if outcome == "model failure":
-                    def fail(*_args):
-                        raise RuntimeError("model failure")
-                    steps = [fail]
-                if outcome == "cancel":
-                    self.weather.result = asyncio.CancelledError()
-                agent, _ = make_agent(self.connections, steps)
-                with patch.object(native_mcp, "MCPStreamableHTTPTool", side_effect=create):
-                    if outcome == "cancel":
-                        with self.assertRaises(asyncio.CancelledError):
-                            await agent.run("forecast", session=agent.create_session())
-                    elif outcome == "model failure":
-                        with self.assertRaisesRegex(RuntimeError, "model failure"):
-                            await agent.run("forecast", session=agent.create_session())
-                    else:
-                        await agent.run("forecast", session=agent.create_session())
-                self.assertTrue(created)
-                for tool in created:
-                    tool.close.assert_awaited_once()
-
-    async def test_native_catalog_loader_unloader_and_list(self):
-        def listed(messages, options):
-            text = json.dumps([m.to_dict() for m in messages])
-            self.assertIn("Full authoritative forecast schema", text)
-            self.assertIn("hidden_operation", text)
-            return call("weather_load_tool", {"tool": ["weather_forecast"]})
+    async def test_new_advertised_operation_included_without_configuration_change(self):
+        self.weather.pages[None].tools.append(Tool(
+            name="fresh_operation", description="New advertised operation",
+            inputSchema=ADDITIONAL_INPUT_SCHEMA,
+        ))
 
         def loaded(messages, options):
-            self.assertIn("weather_weather_forecast", {t.name for t in options["tools"]})
-            return call("weather_unload_tool", {"tool": "weather_forecast"})
+            self.assert_catalog(options, self.weather)
+            self.assertNotIn("safety_fresh_operation", names(options))
+            return call("weather_fresh_operation", {"resort_area": "summit"})
 
-        def unloaded(messages, options):
-            self.assertNotIn("weather_weather_forecast", {t.name for t in options["tools"]})
-            return Message("assistant", ["done"])
+        agent, _ = await make_agent(self.connections, [
+            call("load_skill", {"skill_name": "weather"}), loaded, Message("assistant", ["done"]),
+        ], self.stack)
+        await agent.run("new operation", session=agent.create_session())
+        self.assertEqual(self.weather.calls, [("fresh_operation", {"resort_area": "summit"})])
 
-        agent, _ = make_agent(self.connections, [
-            call("weather_list_mcp_tools", {}), listed, loaded, unloaded,
-        ])
-        await agent.run("catalog", session=agent.create_session())
+    async def test_sequential_skill_loads_retain_both_groups_including_streaming(self):
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                def weather_loaded(messages, options):
+                    self.assert_catalog(options, self.weather)
+                    self.assertNotIn("safety_safety_risk", names(options))
+                    return call("load_skill", {"skill_name": "safety"}, "load-safety")
 
-    async def test_newly_advertised_operation_loads_and_calls_without_host_config_change(self):
-        original_config = self.weather.connection.config
+                def both_loaded(messages, options):
+                    self.assert_catalog(options, self.weather)
+                    self.assert_catalog(options, self.safety)
+                    return Message("assistant", ["both visible"])
 
-        def initial(messages, options):
-            text = json.dumps([m.to_dict() for m in messages]) + str(options.get("instructions"))
-            tool_context = json.dumps([t.to_dict() for t in options["tools"]])
-            for marker in ("hidden_operation", "resort_area", "Additional provider-advertised"):
-                self.assertNotIn(marker, text)
-                self.assertNotIn(marker, tool_context)
-            return call("weather_load_tool", {"tool": "hidden_operation"})
+                agent, _ = await make_agent(self.connections, [
+                    call("load_skill", {"skill_name": "weather"}),
+                    weather_loaded, both_loaded,
+                ], self.stack)
+                response = agent.run("both", session=agent.create_session(), stream=stream)
+                if stream:
+                    updates = [update async for update in response]
+                    self.assertFalse(any(c.type == "function_approval_request"
+                                         for update in updates for c in update.contents))
+                    self.assertEqual((await response.get_final_response()).text, "both visible")
+                else:
+                    self.assertEqual((await response).text, "both visible")
 
-        def loaded(messages, options):
-            tools = {t.name: t for t in options["tools"]}
-            self.assertEqual(tools["weather_hidden_operation"].parameters(), ADDITIONAL_INPUT_SCHEMA)
-            self.assertNotIn("weather_weather_forecast", tools)
-            self.assertNotIn("safety_hidden_operation", tools)
-            return call("weather_hidden_operation", {"resort_area": "summit"})
+    async def test_unknown_empty_and_failed_skill_loads_do_not_register(self):
+        for name, error in (("unknown", None), ("", None), ("weather", RuntimeError("read failed")),
+                            ("weather", None)):
+            with self.subTest(name=name, error=error):
+                fixture = FakeMCP()
+                fixture.skill_error = error
+                if name == "weather" and error is None:
+                    fixture.skill_text = ""  # Native MCPSkill rejects empty/non-text content.
 
-        def done(messages, options):
-            result = [c for m in messages for c in m.contents if c.type == "function_result"][-1]
-            self.assertIsNone(result.exception)
-            return Message("assistant", ["done"])
+                def rejected(messages, options):
+                    self.assertNotIn("weather_weather_forecast", names(options))
+                    text = json.dumps([m.to_dict() for m in messages])
+                    self.assertTrue("Error:" in text or "exception" in text)
+                    return Message("assistant", ["failed"])
 
-        agent, _ = make_agent(self.connections, [initial, loaded, done])
-        self.assertEqual((await agent.run("additional operation", session=agent.create_session())).text, "done")
-        self.assertIs(self.weather.connection.config, original_config)
-        self.assertEqual(self.weather.calls, [("hidden_operation", {"resort_area": "summit"})])
-        self.assertEqual(self.safety.calls, [])
+                agent, _ = await make_agent([fixture.connection], [
+                    call("load_skill", {"skill_name": name}), rejected,
+                ], self.stack)
+                self.assertEqual((await agent.run("load", session=agent.create_session())).text, "failed")
+                self.assertEqual(fixture.calls, [])
 
-    async def test_native_rejects_loading_unknown_tool(self):
-        def rejected(messages, options):
-            self.assertNotIn("weather_unknown_operation", {t.name for t in options["tools"]})
-            self.assertIn("not available", json.dumps([m.to_dict() for m in messages]).lower())
-            return Message("assistant", ["denied"])
-        agent, _ = make_agent(self.connections, [
-            call("weather_load_tool", {"tool": "unknown_operation"}), rejected,
-        ])
-        await agent.run("load", session=agent.create_session())
+    async def test_pending_native_skill_approval_does_not_register(self):
+        agent, client = await make_agent(self.connections, [
+            call("load_skill", {"skill_name": "weather"}),
+        ], self.stack, auto_approve=False)
+        response = await agent.run("load", session=agent.create_session())
+        self.assertTrue(any(c.type == "function_approval_request"
+                            for m in response.messages for c in m.contents))
+        self.assertNotIn("weather_weather_forecast", names(client.requests[-1][1]))
+        self.assertNotIn("skill://weather/SKILL.md", self.weather.reads)
+
+    async def test_known_name_with_non_success_result_does_not_register(self):
+        registration = SkillToolsMiddleware(self.connections)
+        await registration.initialize(SimpleNamespace(), self.stack)
+        for result in ([Content.from_text("Error: read failed")], "not native content", None):
+            async def next_call():
+                context.result = result
+            context = FunctionInvocationContext(
+                function=SimpleNamespace(name="load_skill"), arguments={"skill_name": "weather"},
+                tools=[],
+            )
+            await registration.process(context, next_call)
+            self.assertIs(context.result, result)
+            self.assertEqual(context.tools, [])
+
+    async def test_cancelled_skill_read_does_not_register_or_poison_next_run(self):
+        self.weather.skill_error = asyncio.CancelledError()
+        agent, client = await make_agent(self.connections, [
+            call("load_skill", {"skill_name": "weather"}),
+        ], self.stack)
+        with self.assertRaises(asyncio.CancelledError):
+            await agent.run("load", session=agent.create_session())
         self.assertEqual(self.weather.calls, [])
+        self.weather.skill_error = None
+
+        def fresh(messages, options):
+            self.assertNotIn("weather_weather_forecast", names(options))
+            return call("load_skill", {"skill_name": "weather"})
+
+        client.steps = [fresh, *native_steps(self.weather)[1:]]
+        self.assertEqual((await agent.run("retry", session=agent.create_session())).text, "done")
+        self.assertEqual(len(self.weather.calls), 1)
+
+    async def test_native_pagination_and_different_skill_prefix_mapping(self):
+        weather = self.weather
+        first, *rest = weather.pages[None].tools
+        weather.pages = {None: ListToolsResult(tools=rest, nextCursor="second"),
+                         "second": ListToolsResult(tools=[first])}
+        for skill, prefix in (("ski-coach", "skicoach"), ("lift-traffic", "lifttraffic")):
+            fixture = FakeMCP(skill, prefix, "weather_forecast")
+            agent, _ = await make_agent([weather.connection, fixture.connection], [
+                call("load_skill", {"skill_name": skill}),
+                call(f"{prefix}_weather_forecast", {"hours": 2}), Message("assistant", ["done"]),
+            ], self.stack)
+            await agent.run("other", session=agent.create_session())
+            self.assertEqual(fixture.calls, [("weather_forecast", {"hours": 2})])
+        self.assertEqual(weather.cursors, [None, "second", None, "second"])
+        self.assertEqual(weather.calls, [])
+
+    async def test_ambiguous_skill_identity_rejected(self):
+        duplicate = FakeMCP("weather", "other")
+        with self.assertRaisesRegex(ValueError, "Ambiguous.*weather"):
+            await make_agent([self.weather.connection, duplicate.connection], [], self.stack)
 
     async def test_native_errors_and_cancellation(self):
         for result in (
@@ -376,29 +453,68 @@ class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
             RuntimeError("transport failed"),
         ):
             self.weather.result = result
-            agent, client = make_agent(self.connections, native_steps(self.weather))
+            agent, client = await make_agent(self.connections, native_steps(self.weather), self.stack)
             await agent.run("forecast", session=agent.create_session())
             text = json.dumps([m.to_dict() for m in client.requests[-1][0]])
             self.assertIn("exception", text)
         self.weather.result = asyncio.CancelledError()
-        agent, _ = make_agent(self.connections, native_steps(self.weather))
+        agent, _ = await make_agent(self.connections, native_steps(self.weather), self.stack)
         with self.assertRaises(asyncio.CancelledError):
             await agent.run("forecast", session=agent.create_session())
 
-    async def test_native_pagination_and_prefix_routing(self):
-        weather = self.weather
-        first, second = weather.pages[None].tools
-        weather.pages = {None: ListToolsResult(tools=[second], nextCursor="second"),
-                         "second": ListToolsResult(tools=[first])}
-        collision = FakeMCP("other", "other", "weather_forecast")
-        agent, _ = make_agent([weather.connection, collision.connection], [
-            call("other_load_tool", {"tool": "weather_forecast"}),
-            call("other_weather_forecast", {"hours": 2}), Message("assistant", ["done"]),
-        ])
-        await agent.run("other", session=agent.create_session())
-        self.assertEqual(weather.cursors, [None, "second"])
-        self.assertEqual(weather.calls, [])
-        self.assertEqual(collision.calls, [("weather_forecast", {"hours": 2})])
+    async def test_shared_wrapper_lifetime_success_failure_cancellation_and_abandoned_stream(self):
+        from skills_orchestrator_python import native_mcp
+        native_class = native_mcp.MCPStreamableHTTPTool
+        created = []
+
+        def create(**kwargs):
+            native = native_class(**kwargs)
+            native.close = AsyncMock(wraps=native.close)
+            created.append(native)
+            return native
+
+        for outcome in ("success", "model failure", "cancel", "stream close", "stream cancel"):
+            with self.subTest(outcome=outcome):
+                created.clear()
+                fixture = FakeMCP()
+                with patch.object(native_mcp, "MCPStreamableHTTPTool", side_effect=create):
+                    async with AsyncExitStack() as stack:
+                        steps = native_steps(fixture)
+                        if outcome == "model failure":
+                            def fail(*_args):
+                                raise RuntimeError("model failure")
+                            steps = [fail]
+                        if outcome in ("cancel", "stream cancel"):
+                            fixture.result = asyncio.CancelledError()
+                        agent, client = await make_agent([fixture.connection], steps, stack)
+                        if outcome == "cancel":
+                            with self.assertRaises(asyncio.CancelledError):
+                                await agent.run("forecast", session=agent.create_session())
+                        elif outcome == "model failure":
+                            with self.assertRaisesRegex(RuntimeError, "model failure"):
+                                await agent.run("forecast", session=agent.create_session())
+                        elif outcome.startswith("stream"):
+                            response = agent.run("forecast", session=agent.create_session(), stream=True)
+                            if outcome == "stream cancel":
+                                with self.assertRaises(asyncio.CancelledError):
+                                    async for _ in response:
+                                        pass
+                            else:
+                                async for _ in response:
+                                    if len(client.requests) >= 2:
+                                        break
+                            # MAF ResponseStream has no public aclose API. Abandoning
+                            # a pull stream holds no per-run MCP resource to close.
+                        else:
+                            await agent.run("forecast", session=agent.create_session())
+                        created[0].close.assert_not_awaited()
+                        # Neither an early stream close nor an error leaks schemas to another run.
+                        def fresh(messages, options):
+                            self.assertNotIn("weather_weather_forecast", names(options))
+                            return Message("assistant", ["fresh"])
+                        client.steps = [fresh]
+                        self.assertEqual((await agent.run("followup", session=agent.create_session())).text, "fresh")
+                    created[0].close.assert_awaited_once()
 
 
 class SharedBuilderTests(unittest.IsolatedAsyncioTestCase):
@@ -441,8 +557,9 @@ class SharedBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(captured["context_providers"][-1], history)
         self.assertEqual(captured["default_options"], {"store": False})
         self.assertEqual(built.history_backend, "cosmos")
-        self.assertIsInstance(captured["middleware"][0], ToolApprovalMiddleware)
-        self.assertIsInstance(captured["middleware"][1], NativeMCPToolsMiddleware)
+        self.assertEqual(len(captured["middleware"]), 1)
+        self.assertIsInstance(captured["middleware"][0], SkillToolsMiddleware)
+        self.assertIn("weather", captured["middleware"][0].catalogs)
 
 
 if __name__ == "__main__":

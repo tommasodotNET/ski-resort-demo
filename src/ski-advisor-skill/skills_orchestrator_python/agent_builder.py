@@ -1,7 +1,7 @@
 """Shared `agent_framework.Agent` construction for the Skills Orchestrator.
 
 Both hosting surfaces this project exposes build the *same* underlying agent --
-Native MCP-discovered Agent Skills and progressive tools for weather/safety/
+Native MCP-discovered Agent Skills and skill-selected tools for weather/safety/
 ski-coach/lift-traffic, the Foundry ski researcher as a static direct tool, and
 (when configured) a Cosmos DB-backed `CosmosHistoryProvider` for durable
 conversation history. Only the surrounding transport/host differs:
@@ -27,10 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_framework import (
-    AggregatingSkillsSource,
-    MCPSkillsSource,
     SkillsProvider,
-    ToolApprovalMiddleware,
 )
 from agent_framework.azure import CosmosHistoryProvider
 from agent_framework.foundry import FoundryAgent, FoundryChatClient
@@ -50,18 +47,18 @@ from .config import (
     get_foundry_config,
     resolve_skill_provider_url,
 )
-from .native_mcp import NativeMCPToolsMiddleware, SkillConnection
+from .native_mcp import SkillToolsMiddleware, SkillConnection
 
 logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """You are the AlpineAI Skills Orchestrator, the main ski resort advisor.
 Use `ski_researcher_agent` for general skiing questions that need web-backed research.
 Never invent operational resort data. Answer concisely and concretely, and prioritize safety.
-Load the relevant skill's canonical instructions with load_skill, then use the named
-provider_load_tool described there. Call the newly exposed direct MCP operation on the
-next iteration. Prefer named loading instead of listing the entire MCP catalog.
+Load the relevant skill's canonical instructions with load_skill. After a successful
+load, all operations from that provider are registered for the next model iteration.
+Choose and directly call operations according to their descriptions and parameter schemas.
 Resource reads are for skill documentation only, never operational data.
-Each new turn starts with native loaders again; reload needed tools on followups.
+Each new turn starts with skill metadata and load helpers only; reload needed skills on followups.
 Loading is progressive disclosure, not authorization."""
 
 
@@ -112,7 +109,7 @@ async def _discover_providers(
     Returns:
         A tuple of ``(connections, connected_providers, skipped_providers)``
         for every provider that was successfully connected. Native skills and
-        per-run native tool instances share the host-owned session. Unconfigured or
+        app-lifetime native tool instances share the host-owned session. Unconfigured or
         unreachable providers are recorded in `skipped_providers` and otherwise
         skipped.
     """
@@ -235,19 +232,19 @@ async def build_orchestrator_agent(
     skills_provider: SkillsProvider | None = None
     context_providers: list[Any] = []
     middleware: list[Any] = []
+    skill_tools: SkillToolsMiddleware | None = None
     if connections:
-        skills_sources = [MCPSkillsSource(client=connection.session) for connection in connections]
-        source = skills_sources[0] if len(skills_sources) == 1 else AggregatingSkillsSource(skills_sources)
-        skills_provider = SkillsProvider(source)
+        skill_tools = SkillToolsMiddleware(connections)
+        # Native trusted read-only execution must stay in one function loop:
+        # approval/resume starts a new loop and discards add_tools registrations.
+        # Script approvals retain the native SkillsProvider default.
+        skills_provider = SkillsProvider(
+            skill_tools.source,
+            disable_load_skill_approval=True,
+            disable_read_skill_resource_approval=True,
+        )
         context_providers.append(skills_provider)
-        # The connected providers are trusted application resources, so their
-        # read-only skill operations may run unattended behind either host.
-        middleware = [
-            ToolApprovalMiddleware(
-                auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule]
-            ),
-            NativeMCPToolsMiddleware(connections),
-        ]
+        middleware = [skill_tools]
     else:
         logger.warning("No skill providers connected; agent will run with no discoverable skills.")
 
@@ -309,6 +306,9 @@ async def build_orchestrator_agent(
         middleware=middleware,
         default_options=default_options or None,
     )
+
+    if skill_tools is not None:
+        await skill_tools.initialize(agent, exit_stack)
 
     if enter_agent_context:
         await exit_stack.enter_async_context(agent)

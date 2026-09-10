@@ -146,8 +146,9 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(endpoint, f"{skill} did not start:\n{log_path.read_text()}")
             self.endpoints[skill] = endpoint
 
-    async def test_all_four_native_skill_loader_direct_calls_and_errors(self):
+    async def test_all_four_native_skill_groups_direct_calls_and_errors(self):
         async with AsyncExitStack() as stack:
+            self.stack = stack
             sessions, connections, catalogs = {}, [], {}
             for config, (skill, _, _) in zip(DEFAULT_SKILL_PROVIDERS, PROVIDERS, strict=True):
                 endpoint = self.endpoints[skill]
@@ -187,7 +188,9 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
                     tools = catalogs[connection.config.key]
                     canonical = await session.read_resource(AnyUrl(f"skill://{skill}/SKILL.md"))
                     instructions = "\n".join(content.text for content in canonical.contents)
-                    self.assertIn(f"{connection.config.key}_load_tool", instructions)
+                    self.assertIn("load_skill", instructions)
+                    self.assertIn("next model iteration", instructions.lower())
+                    self.assertNotIn("_load_tool", instructions)
                     self.assertNotIn("read_skill_resource", instructions)
                     for name, tool in tools.items():
                         args = {key: sample_arguments[key] for key in tool.inputSchema.get("properties", {})
@@ -233,18 +236,19 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             return call("load_skill", {"skill_name": skill})
 
         def skill_loaded(messages, options):
-            self.assertIn(f"{prefix}_load_tool", json.dumps([m.to_dict() for m in messages]))
-            self.assertNotIn(full_name, {tool.name for tool in options["tools"]})
-            return call(f"{prefix}_load_tool", {"tool": name})
-
-        def tool_loaded(messages, options):
             exposed = {tool.name: tool for tool in options["tools"]}
             self.assertIn(full_name, exposed)
             self.assertEqual(exposed[full_name].parameters(), schema.inputSchema)
+            self.assertFalse(any(tool.endswith(("_load_tool", "_list_mcp_tools", "_unload_tool"))
+                                 for tool in exposed))
             for remote in connections:
-                for operation in catalogs[remote.config.key]:
+                for operation, advertised in catalogs[remote.config.key].items():
                     other = f"{remote.config.key}_{operation}"
-                    if other != full_name:
+                    if remote is connection:
+                        self.assertEqual(exposed[other].parameters(), advertised.inputSchema)
+                        self.assertEqual(exposed[other].description, advertised.description)
+                        self.assertEqual(exposed[other].approval_mode, "never_require")
+                    else:
                         self.assertNotIn(other, exposed)
             return call(full_name, args)
 
@@ -254,7 +258,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('"isError": true', json.dumps(result.to_dict()))
             return Message("assistant", ["live native result"])
 
-        agent, _ = make_agent(connections, [initial, skill_loaded, tool_loaded, done])
+        agent, _ = await make_agent(connections, [initial, skill_loaded, done], self.stack)
         response = await agent.run("ski advice", session=agent.create_session())
         self.assertEqual(response.text, "live native result")
         self.assertFalse(any(c.type == "function_approval_request"
@@ -276,11 +280,10 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             results = [c for m in messages for c in m.contents if c.type == "function_result"]
             self.assertIsNotNone(results[-1].exception)
             return Message("assistant", ["failure reported"])
-        agent, _ = make_agent(connections, [
+        agent, _ = await make_agent(connections, [
             call("load_skill", {"skill_name": "weather"}),
-            call("weather_load_tool", {"tool": "weather_current_conditions"}),
             call("weather_weather_current_conditions", {}), failed,
-        ])
+        ], self.stack)
         self.assertEqual((await agent.run("weather", session=agent.create_session())).text, "failure reported")
 
 

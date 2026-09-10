@@ -44,19 +44,18 @@ public static class LiftTrafficSkillCatalog
         builder.AppendLine();
         builder.AppendLine(Instructions);
         builder.AppendLine();
-        builder.AppendLine("## Native progressive tool loading");
-        builder.AppendLine($"1. Use `load_skill` for `{SkillName}` to load these instructions.");
-        builder.AppendLine($"2. Select only the operations needed for the request. Call `{ProviderPrefix}_load_tool` with " +
-            "`{\"tool\":\"<remote tool name>\"}` or `{\"tool\":[\"<remote tool name>\",\"<another remote tool name>\"]}`.");
-        builder.AppendLine("3. On the NEXT model iteration, call the directly registered tool using its newly disclosed input schema. " +
-            "Loading a tool does not execute it; do not request loading and execution in the same iteration.");
-        builder.AppendLine("Pass original remote names to the loader, not prefixed callable names. " +
-            "Load named operations rather than listing the entire provider catalog.");
+        builder.AppendLine("## Native skill-scoped tool loading");
+        builder.AppendLine($"1. A successful `load_skill('{SkillName}')` automatically makes ALL tools from this provider " +
+            "available on the NEXT model iteration, together with their full descriptions and input schemas.");
+        builder.AppendLine("2. On that next iteration, use those descriptions and input schemas to select and directly invoke " +
+            "only the operations required for the request.");
+        builder.AppendLine("Loading the skill does not execute any tools. No separate tool-loader calls or custom dispatcher " +
+            "are needed; call the registered functions directly.");
         builder.AppendLine();
-        builder.AppendLine("| Remote tool name for loader | Direct callable after loading |");
-        builder.AppendLine("|---|---|");
+        builder.AppendLine("| Direct callable after skill loading |");
+        builder.AppendLine("|---|");
         foreach (var name in ToolNames)
-            builder.AppendLine($"| `{name}` | `{ProviderPrefix}_{name}` |");
+            builder.AppendLine($"| `{ProviderPrefix}_{name}` |");
         return builder.ToString();
     }
 
