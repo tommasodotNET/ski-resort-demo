@@ -18,7 +18,7 @@ To explore that distinction, the demo now has a second path: **distributed Agent
 
 The resort has only four skills and twelve tools. It is a simple setting for illustrating a problem that becomes more interesting with a large catalog: how to give the model the right procedures and tool schemas without placing everything in its initial context.
 
-**For a genuinely small catalog, start simpler:** register all allowed MCP tools upfront using the standard SDK. You can still load skill instructions on demand. Progressive tool loading is optional, and the request-lifetime middleware discussed below is unnecessary in that eager-loading setup.
+**For a genuinely small catalog, start simpler:** register the configured providers' MCP tools upfront using the standard SDK. You can still load skill instructions on demand. Progressive tool loading is optional, and the request-lifetime middleware discussed below is unnecessary in that eager-loading setup.
 
 The goal here is to explore the larger-catalog pattern, not to claim that twelve tools require it.
 
@@ -235,23 +235,18 @@ weather_tools = MCPStreamableHTTPTool(
     session=weather_session,
     tool_name_prefix="weather",
     load_prompts=False,
-    allowed_tools=(
-        "weather_current_conditions",
-        "weather_forecast",
-        "weather_storm_status",
-    ),
     use_progressive_disclosure=True,
     approval_mode="never_require",
 )
 ```
 
-The allowlist is trusted host configuration for this demo's read-only tools. It is not taken from skill prose. Endpoint configuration and provider prefixes keep routing explicit. The other prefixes are `safety`, `skicoach`, and `lifttraffic`.
+The configured providers' catalogs are the source of truth. There is no second tool-name list in the advisor: any tool they advertise can be loaded. The demo trusts these providers and uses `never_require` for their read-only operations; adding write operations would require revisiting approval policy. Endpoint configuration and provider prefixes keep routing explicit. The other prefixes are `safety`, `skicoach`, and `lifttraffic`.
 
 ### The association is model-mediated
 
 There are two different kinds of discovery:
 
-1. Before the model runs, the host retrieves tool catalogs through paginated MCP `tools/list` and applies its configured allowlists. In this implementation, that happens when invocation-local native tool objects connect.
+1. Before the model runs, the host retrieves the configured providers' catalogs through paginated MCP `tools/list`. In this implementation, that happens when invocation-local native tool objects connect.
 2. The model initially receives skill metadata and native loading helpers, not all twelve operation schemas. Existing advisor instructions and the researcher tool are also present.
 3. Native `load_skill` reads the chosen `SKILL.md`. Its instructions list relevant exact tool names.
 4. The model chooses names and calls the native provider loader, such as `weather_load_tool({"tool":"weather_forecast"})`. The argument also accepts an array.
@@ -262,7 +257,7 @@ The repeated `weather_` comes from adding the configured provider prefix to an a
 
 There is no atomic "load skill and resolve its tool dependencies" operation. The model follows the instructions and makes a separate loading decision. It can also invoke a loader without first loading the skill. Skill selection is guidance, not authorization.
 
-Each provider additionally has native `list_mcp_tools` and `unload_tool` functions. Calling `list_mcp_tools` reveals the allowed provider catalog, including parameter schemas. The skill names known operations so the model normally does not need that broader listing.
+Each provider additionally has native `list_mcp_tools` and `unload_tool` functions. Calling `list_mcp_tools` reveals the provider catalog, including parameter schemas. The skill names known operations so the model normally does not need that broader listing.
 
 This is SDK-native progressive registration, not a custom operation dispatcher or a Foundry Toolbox. The sample uses Foundry's `gpt41` deployment, but the mechanism lives in MAF's function-calling integration, not a Foundry-only tool-search feature.
 
@@ -272,7 +267,9 @@ Both skills-advisor hosting surfaces, Responses and A2A, use the same Python bui
 
 Connections and tool objects have different lifetimes. Native progressive MCP objects remember which tool names have been loaded. The demo supplies fresh objects per invocation so concurrent users do not share that mutable exposure state.
 
-The chosen integration is `NativeMCPToolsMiddleware` in `skills_orchestrator_python/native_mcp.py`: 98 lines including imports, documentation, and a connection dataclass. It supplies native runtime tool objects through public middleware APIs and keeps them alive until a streamed response finishes, fails, or is cancelled. Standard approval middleware runs first; approval continuations use native `always_load` to restore pending direct tools. Ordinary followups load needed operations again.
+The chosen integration is `NativeMCPToolsMiddleware` in `skills_orchestrator_python/native_mcp.py`: under 100 lines including imports, documentation, and a connection dataclass. It supplies native runtime tool objects through public middleware APIs and keeps them alive until a streamed response finishes, fails, or is cancelled. Ordinary followups load needed operations again.
+
+Provider operations use native `approval_mode="never_require"` and the SDK's automatic function invocation. Instruction reads use the standard skills read-only auto-approval rule. The adapter does not maintain approval state or custom resumption logic; this demo uses automatic execution for its trusted read-only providers.
 
 **The middleware manages lifetime. It does not map skills to operations, select tool names, implement dynamic loading, or replace the SDK's dispatcher, schema handling, or approval engine.** Per-invocation native objects provide isolation; middleware is how these shared-agent hosts supply them.
 
@@ -295,7 +292,7 @@ agent = client.as_agent(
 )
 ```
 
-For the small-catalog alternative, leave `use_progressive_disclosure=False` and register the MCP integration directly in the agent's `tools`. All allowed operation definitions are available upfront, and this progressive-state lifecycle adapter can be omitted.
+For the small-catalog alternative, leave `use_progressive_disclosure=False` and register the MCP integration directly in the agent's `tools`. All advertised operation definitions are available upfront, and this progressive-state lifecycle adapter can be omitted.
 
 ## Following a real execution
 
@@ -356,7 +353,7 @@ The requests did not force identical work. A2A also requested a weather forecast
 
 ## What changed in latency and tokens?
 
-These measurements were captured on **September 10, 2026**, against the native-tools worktree described here, using the `gpt41` deployment.
+These measurements were captured on **September 10, 2026**, against native-tools commit `b8306c4`, using the `gpt41` deployment. Later simplification removed the redundant host tool-name list and unused manual-approval resumption code. The same twelve provider operations still load dynamically and execute automatically, but these timings are the original capture, not a new benchmark of that simplification.
 
 Each request used the exact prompt quoted above and a fresh conversation, with no previous response ID or history. All six reused already-running services and connections. The order was A2A/native in pair 1, native/A2A in pair 2, and A2A/native in pair 3, with at least 65 seconds between responses and subsequent requests.
 
@@ -423,18 +420,18 @@ The weather service stays remote. Its reasoning moves into the advisor. Native M
 
 Repository: **[Ski resort multi-agent and distributed skills demo](https://github.com/tommasodotNET/ski-resort-demo)**.
 
-The native-tools implementation is pinned to [commit `b8306c4`](https://github.com/tommasodotNET/ski-resort-demo/commit/b8306c42def96a78aacb89f4f515a4b7aab8799c). The measurements above were captured from that implementation running locally. These links identify the actual code, not the earlier resource-based baseline:
+The measured native-tools version is pinned to [commit `b8306c4`](https://github.com/tommasodotNET/ski-resort-demo/commit/b8306c42def96a78aacb89f4f515a4b7aab8799c). The subsequent catalog and automatic-invocation simplification is in [commit `df153a6`](https://github.com/tommasodotNET/ski-resort-demo/commit/df153a687279cc7e93fe5c9be7cb987f022d0c78). Links below identify the relevant revisions; the benchmark remains tied to its original capture:
 
 | Area | Code path |
 |---|---|
 | Original A2A advisor | [`src/ski-advisor-a2a/Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-a2a/Program.cs) |
 | Shared skills advisor construction | [`agent_builder.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-skill/skills_orchestrator_python/agent_builder.py) |
-| Native tool lifetime integration | [`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py) |
-| Provider endpoints, prefixes, and allowlists | [`config.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-skill/skills_orchestrator_python/config.py) |
+| Native tool lifetime integration | [`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py) |
+| Provider endpoints and prefixes | [`config.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/skills_orchestrator_python/config.py) |
 | Generated weather skill | [`WeatherSkillCatalog.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Skills/WeatherSkillCatalog.cs) |
 | Weather tool adapters and typed results | [`WeatherTools.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Tools/WeatherTools.cs) |
 | Weather instructional resources and host | [`WeatherSkillResources.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Skills/WeatherSkillResources.cs), [`Program.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/weather-skills/Program.cs) |
-| Native-loop and local MCP coverage | [`tests/`](https://github.com/tommasodotNET/ski-resort-demo/tree/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/ski-advisor-skill/tests) |
+| Native-loop and local MCP coverage | [`tests/`](https://github.com/tommasodotNET/ski-resort-demo/tree/df153a687279cc7e93fe5c9be7cb987f022d0c78/src/ski-advisor-skill/tests) |
 | Aspire topology | [`src/apphost.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/b8306c42def96a78aacb89f4f515a4b7aab8799c/src/apphost.cs) |
 
 The distinction between format, transport, and SDK behavior matters:

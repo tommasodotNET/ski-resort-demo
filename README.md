@@ -120,7 +120,7 @@ separate A2A-specialist architecture selection remains unchanged. See the
 for tool loading, approval, lifetime, and local testing.
 
 This small demo illustrates a larger-tool-catalog pattern. For genuinely small
-catalogs, load all allowed MCP tools upfront with the standard SDK instead.
+catalogs, load the configured providers' MCP tools upfront with the standard SDK instead.
 That simpler composition does not need this demo's progressive-state lifecycle
 middleware; it can still load skill instructions on demand.
 
@@ -244,12 +244,20 @@ transport and approval behavior; there is no custom operation dispatcher.
 
 Skill-to-tool association is instructional guidance, not an authorization
 boundary or an atomic SDK guarantee. A model can call a loader without first
-loading a skill. The native `list_mcp_tools` function can disclose its allowed
+loading a skill. The native `list_mcp_tools` function can disclose its provider's
 catalog when requested; skill instructions avoid that broad listing by naming
 the needed tools. See the [advisor documentation](src/ski-advisor-skill/README.md#native-progressive-disclosure)
 for the actual lifetime and approval guarantees.
 
-`NativeMCPToolsMiddleware` is 98 lines of public-API lifetime glue, including
+The configured providers' tool catalogs are the source of truth; the advisor
+does not maintain a duplicate tool-name allowlist. Native loaders can load any
+advertised tool, but schemas remain hidden until selected. The current trusted
+providers expose read-only operations, which retain unattended execution.
+Native `approval_mode="never_require"` and the SDK function-calling loop handle
+that execution automatically. Instruction reads use the standard skills
+read-only auto-approval rule; there is no custom approval-resumption bookkeeping.
+
+`NativeMCPToolsMiddleware` is under 100 lines of public-API lifetime glue, including
 imports and documentation. It supplies fresh native MCP tool objects per
 invocation to isolate loaded-name state on the shared agent. It does not map
 skills to tools or implement loading, dispatch, schemas, or approval. Shared

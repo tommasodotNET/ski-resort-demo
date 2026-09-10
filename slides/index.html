@@ -503,7 +503,7 @@ foreach (var tool in functionTools)
             <div class="value-grid">
               <div><strong>Four skills, twelve tools</strong><span>illustrate how procedures guide on-demand schema exposure</span></div>
               <div><strong>Independent language choices</strong><span>Python skills advisor; .NET MCP providers; no required language rewrite</span></div>
-              <div><strong>Small real catalog?</strong><span>load all allowed tools upfront with the standard SDK</span></div>
+              <div><strong>Small real catalog?</strong><span>load provider tools upfront with the standard SDK</span></div>
               <div><strong>Progressive registration</strong><span>native MAF capability, not a Foundry Toolbox</span></div>
             </div>
             <p class="takeaway">Eager tool loading avoids the progressive-state lifecycle middleware entirely.</p>
@@ -581,14 +581,13 @@ MCPStreamableHTTPTool(
     session=weather_session,
     tool_name_prefix="weather",
     load_prompts=False,
-    allowed_tools=weather_tool_names,
     use_progressive_disclosure=True,
     approval_mode="never_require",
 )
               </code></pre>
             </div>
             <p class="takeaway">Host discovers the catalog upfront. The model sees operation schemas only when loaded.</p>
-            <aside class="notes">These are shortened configuration excerpts, not the complete shared builder. The allowlist contains the three trusted read-only weather operations, so never_require is a host policy rather than trust derived from the document. MAF retrieves paginated tools/list before the first model iteration. The initial context includes skill summaries and native management functions, plus advisor instructions and the researcher tool. list_mcp_tools can reveal the allowed catalog; named loading avoids that extra listing. This SDK function-calling feature is not Foundry-only.</aside>
+            <aside class="notes">These are shortened configuration excerpts, not the complete shared builder. The configured providers' catalogs are authoritative; there is no duplicate tool-name list in the advisor. Every advertised tool is eligible for loading, not automatically exposed in initial context. The trusted providers currently publish read-only operations; never_require is a separate host policy that must be revisited if write tools are added. MAF retrieves paginated tools/list before the first model iteration. Initial context includes skill summaries and native management functions, plus advisor instructions and the researcher tool. list_mcp_tools can reveal the provider catalog; named loading avoids that extra listing. This SDK function-calling feature is not Foundry-only.</aside>
           </section>
 
           <section>
@@ -613,11 +612,11 @@ weather_weather_forecast({"hours":6})
             <div class="value-grid">
               <div><strong>Reusable MCP connections</strong><span>open for app lifetime; AsyncExitStack handles cleanup</span></div>
               <div><strong>Per-invocation tool objects</strong><span>isolate mutable loaded-name state on shared-agent hosts</span></div>
-              <div><strong>98 lines of public-API glue</strong><span>NativeMCPToolsMiddleware supplies runtime objects and stream lifetime</span></div>
+              <div><strong>Small public-API adapter</strong><span>NativeMCPToolsMiddleware supplies runtime objects and stream lifetime</span></div>
               <div><strong>SDK remains in control</strong><span>discovery, dynamic loading, schemas, dispatch, approvals</span></div>
             </div>
             <p class="takeaway">The middleware scopes objects. It does not map a skill to tools or load the chosen operations.</p>
-            <aside class="notes">The 98-line native_mcp.py count includes documentation, imports and SkillConnection. Shared MCP sessions are distinct from invocation-local MCPStreamableHTTPTool objects. Those objects stay alive until a lazy stream completes, fails or is cancelled. Standard ToolApprovalMiddleware runs first; public always_load restores verified pending direct tools during approval continuation. Ordinary followups reload operations. For small catalogs, direct eager SDK registration avoids this progressive-state adapter. Do not describe the implementation as zero custom code or say MAF cannot scope tools.</aside>
+            <aside class="notes">The native_mcp.py adapter is under 100 lines including documentation, imports and SkillConnection. Shared MCP sessions are distinct from invocation-local MCPStreamableHTTPTool objects. Those objects stay alive until a lazy stream completes, fails or is cancelled. Native approval_mode=never_require and the SDK function-calling loop execute provider operations automatically. Standard ToolApprovalMiddleware applies the SkillsProvider read-only auto-approval rule to instructional reads. There is no custom approval state or resumption logic. Ordinary followups reload operations. For small catalogs, direct eager SDK registration avoids this progressive-state adapter. Do not describe the implementation as zero custom code or say MAF cannot scope tools.</aside>
           </section>
 
           <section>
@@ -640,6 +639,7 @@ weather_weather_forecast({"hours":6})
             <p class="source">September 10, 2026. Fresh conversations, alternating order, 65s+ cooldown, live data. Tokens sum all model leaves, including specialists. *A2A specialist cache counters absent; native cache included in input.</p>
             <aside class="notes">This is the same six-row evidence as BLOG_DISTRIBUTED_AGENT_SKILLS.md. Wall time runs from frontend POST to SSE body exhaustion, not first token. All six requests used the exact displayed prompt with no previous response ID or history. Existing processes were reused. Total tokens across three runs: A2A 11,952; native 24,242. Native cached input totals 17,920 and is already included in input. A2A advisor cache is zero but specialist counters are absent, so whole-system cache is unknown. Do not infer a pure architectural speedup or twice the billable cost. Native consistently used four model calls: batched skill loads, batched native tool loads, batched direct tools, final answer. A2A used six, six and seven leaves including remote specialists. Pair 3 invoked the coach and asked for skill level, whereas native recommended a lift; pairs 1 and 2 A2A also requested forecasts. Native safety wording in pairs 2 and 3 was not backed by a safety-provider call. This is not an equal-quality controlled study. All responses completed without benchmark retries or failing model leaves; non-model A2A queue-shutdown spans remain in saved evidence. Aggregate invoke_agent/API usage is not added again.</aside>
             <!-- Optional A2A screenshot: current pair-3 trace 4221d53bb0734616ce4b0f718dbda251. -->
+            <!-- Measurement code: b8306c4. Later removal of duplicate host tool-name filtering and unused manual-approval resumption was not rebenchmarked; the existing twelve tools still load dynamically and execute automatically. -->
             <!-- Optional native screenshot: current pair-3 host trace 7d5c879fcb124a90e13bf900e0a259db. Weather 95a6eb39c036519409567dbe4bcfbf78 and lift 9de04c99b36d8d0bff9bd13026f7b152 are separate provider traces correlated by destination/time, not a connected parent tree. Omit auth tokens. -->
           </section>
         </section>

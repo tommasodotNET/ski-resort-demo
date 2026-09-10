@@ -165,11 +165,13 @@ sequenceDiagram
 
 Skill-first selection is model guidance, not authorization or an atomic
 load-and-register operation. A model can invoke native loaders directly.
-Calling a provider's native `list_mcp_tools` reveals that provider's allowed
+Calling a provider's native `list_mcp_tools` reveals that provider's advertised
 catalog; named-tool guidance normally avoids this. Configured endpoints,
 provider prefixes, and native tool approval policy remain separate from
-skill instructions. The SDK's mutable progressive-tool state has an isolated
-lifetime rather than being shared between concurrent users. The 98-line `NativeMCPToolsMiddleware`
+skill instructions. Every tool published by a configured provider is eligible
+for native loading; no duplicate host-side tool-name list is maintained.
+The SDK's mutable progressive-tool state has an isolated
+lifetime rather than being shared between concurrent users. The small `NativeMCPToolsMiddleware`
 supplies per-invocation native runtime tool objects using public APIs. It does
 not select operations or implement loading or dispatch. Shared MCP connections
 remain open for app lifetime; tool objects remain alive through their response

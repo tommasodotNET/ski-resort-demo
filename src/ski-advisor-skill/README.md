@@ -76,7 +76,7 @@ loader is a separate model step that registers the requested functions.
 Canonical `SKILL.md` documents name their relevant tools and loader directly.
 The model therefore need not call `list_mcp_tools` to choose a known operation.
 If it does call that native function, it receives descriptions and parameters
-for the provider's allowed catalog. This is normal SDK behavior, not a hidden
+for the provider's advertised catalog. This is normal SDK behavior, not a hidden
 all-tools prohibition.
 
 Skill-to-tool association is **instructional guidance**, not an authorization
@@ -134,7 +134,7 @@ as host-neutral examples of the general `SKILL.md` format.
 
 ## Tool lifetime and approval
 
-`skills_orchestrator_python/native_mcp.py` contains 98 lines including imports,
+`skills_orchestrator_python/native_mcp.py` contains under 100 lines including imports,
 documentation, a connection dataclass, and the `NativeMCPToolsMiddleware`
 lifecycle adapter. Native progressive tool objects
 retain mutable loaded-name state, so sharing them on either host's singleton
@@ -151,23 +151,29 @@ up failed connection setup. It is separate from the invocation-local tool
 objects that live until their response stream finishes.
 
 Ordinary followups start with loaders again, including restored conversations.
-The standard `ToolApprovalMiddleware` runs before the adapter. On an approval
-continuation, the adapter exposes verified pending direct calls using native
-`always_load`; this restores their availability without granting approval.
-The tests also exercise native `always_require`, denial, and streaming approval
-continuations.
+There is no custom pending-approval state or resumption logic in the adapter.
+The SDK's function-calling loop automatically invokes the model-selected
+operations after they have been loaded.
 
-`SkillProviderConfig.allowed_tools` lists the twelve trusted read-only demo
-operations by provider. They use native `approval_mode="never_require"`;
-unlisted operations cannot be loaded. This is application-controlled policy,
-not trust derived from skill text or an MCP annotation. Adding write operations
-requires revisiting that policy rather than adding them to the read-only list.
-Instruction reads use the SDK's standard skills read-only auto-approval rule.
+The configured providers' MCP catalogs are the source of truth. The host omits
+`allowed_tools`, so any advertised tool can be loaded without changing advisor
+configuration. This does not expose all schemas upfront: native progressive
+loading still adds only the requested operations to model context.
+
+The current providers are trusted application services exposing twelve read-only
+operations. They use native `approval_mode="never_require"`, independently of
+skill text or MCP annotations. A newly published tool inherits that policy;
+adding write operations requires revisiting approvals. Unknown tool names are
+still rejected by the native loader.
+Instruction reads use the SDK's standard `ToolApprovalMiddleware` with
+`SkillsProvider.read_only_tools_auto_approval_rule`. These are native approval
+settings, not another operation-name filter. Manual approval/resumption for
+provider operations is outside this always-automatic demo configuration.
 
 ### Simpler option for small catalogs
 
 Four skills and twelve tools are a small example of a larger-catalog problem.
-For a genuinely small catalog, the standard SDK can expose all allowed MCP
+For a genuinely small catalog, the standard SDK can expose all advertised MCP
 tools upfront: set `use_progressive_disclosure=False` and register the MCP
 integration directly in the agent's `tools`. Keep ordinary connection lifetime,
 access policy, and optional skill instruction loading, but omit this demo's
