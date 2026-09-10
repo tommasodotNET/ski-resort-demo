@@ -1,315 +1,290 @@
 # Skills Orchestrator (`skiadvisorskill`)
 
-Python MAF agent that discovers weather, safety, ski-coach, and lift-traffic as
-remote [SEP-2640](https://github.com/microsoft/agent-framework) Agent Skills
-over MCP, while retaining the Foundry ski researcher as a direct agent tool.
-Its A2A surface lets the voice bridge consume the same skill-backed
-orchestrator used by the frontend's hosted Responses surface.
+Python Microsoft Agent Framework (MAF) advisor combining remote Agent Skills
+with native progressive MCP tool loading. Weather, safety, ski-coach, and
+lift-traffic run as .NET MCP providers with twelve typed tools, not specialist
+model loops. The existing Foundry ski researcher remains a separate direct
+agent tool.
 
-The *same* underlying agent can also be run as a **Microsoft Foundry hosted
-agent** speaking the Responses protocol (`uv run start-responses`) — see
-"Foundry hosted Responses agent" below.
+Both hosting surfaces use `build_orchestrator_agent` in
+`skills_orchestrator_python/agent_builder.py`:
 
-Modeled on two Microsoft Agent Framework Python samples:
+| Aspire resource | Entry point | Consumer |
+| --- | --- | --- |
+| `skiadvisorskill` | `uv run start-responses` | Frontend, using the Responses protocol |
+| `skiadvisorskilla2a` | `uv run start` | `voiceadvisorskill`, using A2A |
 
-- Skill discovery/routing: [`python/samples/02-agents/skills/mcp_based_skill/mcp_based_skill.py`](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/skills/mcp_based_skill/mcp_based_skill.py)
-- Durable, conversation-aware sessions: [`python/samples/02-agents/conversations/cosmos_history_provider.py`](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/conversations/cosmos_history_provider.py)
+The separate .NET `skiadvisora2a` orchestrator continues to call the original
+A2A specialists as agent tools. Selecting that architecture in the frontend
+does not change the skills advisor's implementation.
 
-This project does **not** modify the existing Python specialist agents or their
-A2A servers, and does not implement any MCP skill-*provider* server itself — it
-only *consumes* remote skill providers over MCP. All four skill-provider
-implementations are owned and built in .NET:
+## Skill transport compatibility
 
-- `weather-skills`, `safety-skills`, and `ski-coach-skills`
-  are standalone MCP server projects, one
-  per specialist, each an additive server exposing its specialist's capability
-  as an SEP-2640 skill (`skill://index.json` + `skill://<name>/SKILL.md`) with
-  live operational sibling resources.
-- `lift-traffic-skills` — a lightweight MCP host that reuses the existing
-  lift data capability as live skill resources without starting its chat agent.
+The implemented `skill://index.json` convention follows the
+[historical SEP-2640 Draft revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/b3f015a7929041dada4b0eaf5a657b30d4f5d6d1/seps/2640-skills-extension.md)
+and installed `MCPSkillsSource`, not a current core MCP skill-discovery standard.
+As checked September 10, 2026, the
+[newer proposal text](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/d6b31a03504c15677d49b922b6b6ace0ef65728d/seps/2640-skills-extension.md)
+is marked Accepted while [its PR](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)
+remains open and unmerged. It specifies `skills/list` and `skills/get`, which
+this demo does not implement. Pin the profile and SDK together when upgrading.
 
-See "AppHost wiring" below for how to wire them together.
+Core MCP `resources/read`, `tools/list`, and `tools/call` are separate protocol
+primitives. The native MAF progressive-loading API is independently experimental.
+The Python advisor and .NET providers are implementation choices, not a required
+language migration from the original Python/.NET A2A specialists.
 
-## Naming
+## Native progressive disclosure
 
-The readable source folder `src/ski-advisor-skill` hosts two compact Aspire
-resources:
+The composition uses existing SDK capabilities:
 
-- `skiadvisorskilla2a`: the A2A adapter used by `voiceadvisorskill`; its
-  `AgentCard.name` matches the resource.
-- `skiadvisorskill`: the Foundry-hosted Responses surface; Aspire names its
-  generated hosted-agent deployment `skiadvisorskill-ha`.
+- `MCPSkillsSource` and `SkillsProvider` discover skill summaries and implement
+  `load_skill`.
+- `MCPStreamableHTTPTool(use_progressive_disclosure=True)` implements each
+  provider's `list_mcp_tools`, `load_tool`, and `unload_tool` functions.
+- Native `load_tool` registers selected remote `FunctionTool` definitions via
+  `FunctionInvocationContext.add_tools` for the **next model iteration**.
+  Their invocation, argument binding, MCP transport, and approval behavior
+  remain SDK-managed.
 
-The parallel .NET orchestrator is `skiadvisora2a`, with hosted-agent deployment
-`skiadvisora2a-ha`.
+The model-mediated flow is:
 
-## How it works
+```text
+load_skill({"skill_name": "weather"})
+weather_load_tool({"tool": "weather_forecast"})
+weather_weather_forecast({"hours": 6})  # next model iteration
+```
 
-1. On the first request, connects to every configured skill-provider MCP
-   endpoint over streamable HTTP.
-2. Discovers each provider's SEP-2640 skills via `MCPSkillsSource` (reads
-   `skill://index.json` / `skill://<name>/SKILL.md`) and combines them behind a
-   single `SkillsProvider` (via `AggregatingSkillsSource` when there's more than
-   one provider). The framework advertises and loads each skill and reads its
-   live sibling resources on demand; provider operations are available only
-   through those skill resources.
-3. Maintains exactly one long-lived MCP `ClientSession` per connected provider.
-   That session feeds only its `MCPSkillsSource` and is closed with the shared
-   host-owned `AsyncExitStack`.
-4. Registers the existing Foundry ski researcher with `FoundryAgent.as_tool()`
-   as the agent's only explicit non-skill tool.
-5. Auto-approves the `SkillsProvider`'s read-only skill operations via
-   `ToolApprovalMiddleware`
-   (`SkillsProvider.read_only_tools_auto_approval_rule`) so the orchestrator can
-   run unattended behind either hosting surface.
-6. Delegates the A2A task/session lifecycle to `agent_framework_a2a.A2AExecutor`,
-   the same executor sibling agents in this repo build on. `A2AExecutor` creates
-   an `AgentSession` keyed by the caller's `task.context_id` on *every* call — the
-   same `conversationId` the voice bridge and frontend already track for their own
-   conversation state — so this orchestrator's own history durability (below)
-   naturally lines up with the rest of the app's conversation model.
+The last call reaches MCP `tools/call` with the original remote name
+`weather_forecast`. The repeated `weather_` is intentional: MAF's configured
+provider prefix is added to the provider's already domain-prefixed tool name.
+The loader's `tool` argument accepts one raw remote name or an array of names.
 
-A skill provider that is unconfigured or unreachable is skipped (logged, and
-reported in `/health`); the orchestrator still starts and runs with whatever
-subset of providers is available.
+There is no custom operation dispatcher, Foundry Toolbox, semantic search
+service, or second specialist model call.
 
-## Durable, conversation-aware sessions
+### What is disclosed, and when
 
-This orchestrator is **not stateless**. When a Cosmos DB endpoint is configured,
-it attaches an `agent_framework.azure.CosmosHistoryProvider` as an additional
-`context_provider` on the agent — matching
-`python/samples/02-agents/conversations/cosmos_history_provider.py` exactly:
+The SDK retrieves MCP tool catalogs **host-side** using paginated `tools/list`
+when each invocation's native tool objects connect.
+That network discovery is not deferred until a model selects a skill.
+Progressive disclosure defers *model exposure*: initial context contains
+skill summaries and native management functions, not the twelve operations'
+full schemas. Loading a skill supplies its instructions; calling the native
+loader is a separate model step that registers the requested functions.
 
-- Conversation turns are loaded from Cosmos DB before every model call, and
-  persisted after, keyed by `session_id` (== the A2A `context_id` /
-  `conversationId` the caller already uses).
-- `default_options={"store": False}` is set on the agent so the chat client's
-  own server-managed thread/store is disabled — Cosmos DB is the single source
-  of truth for conversation history, exactly like the reference sample.
-- If Cosmos is not configured (`AZURE_COSMOS_ENDPOINT` unset), the orchestrator
-  still starts and runs; conversation state simply doesn't survive a process
-  restart (each session's history lives only as long as the underlying
-  `AgentSession`'s own in-memory turn). This matches the project's existing
-  graceful-degradation philosophy for every other optional dependency.
-- `GET /health` reports the resolved backend as `conversation_history_backend`:
-  `"cosmos"` once configured, else `"none"`.
+Canonical `SKILL.md` documents name their relevant tools and loader directly.
+The model therefore need not call `list_mcp_tools` to choose a known operation.
+If it does call that native function, it receives descriptions and parameters
+for the provider's allowed catalog. This is normal SDK behavior, not a hidden
+all-tools prohibition.
 
-### Why a new `skillhistory` container instead of reusing `conversations`/`sessions`
+Skill-to-tool association is **instructional guidance**, not an authorization
+boundary or an atomic SDK guarantee. The model can call a loader without
+first calling `load_skill`. Approval and configured tool access are separate
+from instruction loading.
 
-The apphost's existing Cosmos containers (`conversations`, `sessions`, both
-partitioned on `/conversationId`) back the .NET orchestrator's/voice bridge's
-own conversation persistence schema. `CosmosHistoryProvider` **hardcodes** its
-partition key to `/session_id` (see
-`agent_framework_azure_cosmos/_history_provider.py`) and expects to own the
-document schema in whatever container it's given (via
-`create_container_if_not_exists`), which is incompatible with reusing either of
-those existing containers' partition key or documents.
+The progressive MCP API is experimental in MAF core 1.17.0. Rerun the
+framework-level tests when upgrading. Reference samples:
 
-The closest feasible interpretation of "match the app's Cosmos resources where
-feasible" is therefore: reuse the **same Cosmos account + database**
-(`cosmosdb` / `db`) that the rest of the app already uses, but add one new,
-dedicated container — `skillhistory`, partitioned on `/session_id` — solely for
-this orchestrator's own conversation-history schema. See "AppHost wiring" below
-for the exact resource definition.
+- [MCP progressive disclosure](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/samples/02-agents/mcp/mcp_progressive_disclosure.py)
+- [MCP-based skills](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/skills/mcp_based_skill/mcp_based_skill.py)
+- [Cosmos history provider](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/conversations/cosmos_history_provider.py)
+
+## Provider contract
+
+Each configured provider exposes `/skillsmcp` over streamable HTTP.
+
+| MCP capability | Content |
+| --- | --- |
+| `resources/read skill://index.json` | Skill names, descriptions, and canonical document locations |
+| `resources/read skill://<name>/SKILL.md` | Domain instructions and native named-tool loading guidance |
+| `tools/list` | Typed tool names, descriptions, input/output schemas, and annotations |
+| `tools/call` | Execution by the existing .NET domain services |
+
+MCP resources carry discovery and instructional documents only. All business
+operations are MCP tools:
+
+| Provider key | Skill | Remote tools |
+| --- | --- | --- |
+| `weather` | `weather` | `weather_current_conditions`, `weather_forecast`, `weather_storm_status` |
+| `safety` | `safety` | `safety_risk`, `safety_slope_safety`, `safety_closed_slopes` |
+| `skicoach` | `ski-coach` | `ski_coach_recommendations`, `ski_coach_day_plan` |
+| `lifttraffic` | `lift-traffic` | `lift_traffic_lifts`, `lift_traffic_lift_status`, `lift_traffic_wait_times`, `lift_traffic_least_busy_area` |
+
+Provider prefixes keep model-visible tools and loaders distinct. Configured
+connections determine where tools run; skill instructions do not configure
+new endpoints. Tool results are structured, with errors and cancellation
+handled through the MCP/MAF stack rather than fabricated operational data.
+
+| Native loader | Example registered callable |
+| --- | --- |
+| `weather_load_tool` | `weather_weather_forecast` |
+| `safety_load_tool` | `safety_safety_risk` |
+| `skicoach_load_tool` | `skicoach_ski_coach_recommendations` |
+| `lifttraffic_load_tool` | `lifttraffic_lift_traffic_lifts` |
+
+Each prefix also has native `list_mcp_tools` and `unload_tool` functions.
+
+The Agent Card's descriptive identity maps to skill metadata; its authentication
+and transport configuration do not. The former system prompt supplies domain
+instructions. Tools remain MCP tools backed by remote domain services. The
+generated documents add MAF-specific loader guidance, so they are not presented
+as host-neutral examples of the general `SKILL.md` format.
+
+## Tool lifetime and approval
+
+`skills_orchestrator_python/native_mcp.py` contains 98 lines including imports,
+documentation, a connection dataclass, and the `NativeMCPToolsMiddleware`
+lifecycle adapter. Native progressive tool objects
+retain mutable loaded-name state, so sharing them on either host's singleton
+agent would leak tool exposure between users. The adapter creates fresh native
+objects per invocation while reusing host-owned MCP sessions. It closes those
+objects after completion, failure, or cancellation, including lazy streams.
+It supplies native runtime tool objects through public middleware APIs, not a
+skill-to-tool resolver. Discovery, schema generation, loading, dispatch, and
+approval remain SDK code.
+
+The reusable MCP connections stay open for the application's lifetime.
+`AsyncExitStack` is the cleanup manager that closes them on shutdown and cleans
+up failed connection setup. It is separate from the invocation-local tool
+objects that live until their response stream finishes.
+
+Ordinary followups start with loaders again, including restored conversations.
+The standard `ToolApprovalMiddleware` runs before the adapter. On an approval
+continuation, the adapter exposes verified pending direct calls using native
+`always_load`; this restores their availability without granting approval.
+The tests also exercise native `always_require`, denial, and streaming approval
+continuations.
+
+`SkillProviderConfig.allowed_tools` lists the twelve trusted read-only demo
+operations by provider. They use native `approval_mode="never_require"`;
+unlisted operations cannot be loaded. This is application-controlled policy,
+not trust derived from skill text or an MCP annotation. Adding write operations
+requires revisiting that policy rather than adding them to the read-only list.
+Instruction reads use the SDK's standard skills read-only auto-approval rule.
+
+### Simpler option for small catalogs
+
+Four skills and twelve tools are a small example of a larger-catalog problem.
+For a genuinely small catalog, the standard SDK can expose all allowed MCP
+tools upfront: set `use_progressive_disclosure=False` and register the MCP
+integration directly in the agent's `tools`. Keep ordinary connection lifetime,
+access policy, and optional skill instruction loading, but omit this demo's
+progressive-state lifecycle middleware. This is an alternative SDK composition,
+not another runtime mode implemented by this repository.
 
 ## Configuration
 
-Foundry model (same convention as the sibling specialist agents):
-
 | Variable | Default | Description |
 | --- | --- | --- |
-| `GPT41_URI` | *(required)* | Foundry project endpoint, normally injected by Aspire via `.WithReference(deployment)` on an `AddModelDeployment("gpt41", ...)` resource. |
-| `GPT41_MODEL` | `gpt41` | Model deployment name. |
-| `DEFAULT_AD_PORT` | `PORT`, then `8088` | Preferred port for the Foundry Responses host (`start-responses`, `foundry_responses_main.py`), injected by Aspire hosted-agent wiring. |
-| `PORT` | `8084` (A2A) / `8088` (Responses fallback) | Port the A2A server (`start`, `main.py`) listens on; the Responses host reads it only when `DEFAULT_AD_PORT` is unset. |
-| `HOST` | `0.0.0.0` | Only read by `start-responses`; the A2A server's host binding is fixed in `main.py`. |
-| `A2A_AGENT_BASE_URL` | `http://localhost:<PORT>` | Base URL advertised in this agent's own `AgentCard`. Only used by the A2A surface. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | Enables OpenTelemetry span export when set. |
+| `GPT41_URI` | Required | Foundry project endpoint, normally injected by Aspire's model reference |
+| `GPT41_MODEL` | `gpt41` | Model deployment |
+| `SKIRESEARCHER_AGENTNAME` | Required | Existing Foundry researcher agent name |
+| `SKIRESEARCHER_PROJECTENDPOINT` | Required | Researcher project endpoint |
+| `DEFAULT_AD_PORT` | `PORT`, then `8088` | Responses host port, injected by Aspire |
+| `PORT` | `8084` for A2A | A2A server port; also Responses fallback |
+| `HOST` | `0.0.0.0` | Responses host binding |
+| `A2A_AGENT_BASE_URL` | Local A2A URL | Base URL advertised in the A2A Agent Card |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Unset | Enables telemetry export |
 
-Per skill provider (`weather`, `safety`, `skicoach`, `lifttraffic`), resolved in this order:
+Provider endpoints are resolved in order:
 
-| Variable | Description |
+| Configuration | Meaning |
 | --- | --- |
-| `<PROVIDER>_SKILLS_MCP_URL` (e.g. `WEATHER_SKILLS_MCP_URL`, `LIFTTRAFFIC_SKILLS_MCP_URL`) | Full MCP endpoint URL; takes precedence over everything else. |
-| `<PROVIDER>_SKILLS_MCP_PATH` | MCP path appended to the Aspire-discovered base URL (default `/skillsmcp`, matching `app.MapMcp("/skillsmcp")` in every standalone .NET skill-provider project). |
-| `services__<resource>__https__0` / `services__<resource>__http__0` | Aspire service-discovery base URL for `weatherskills`, `safetyskills`, `skicoachskills`, or `lifttrafficskills`. |
+| `<PROVIDER>_SKILLS_MCP_URL` | Explicit full endpoint, e.g. `WEATHER_SKILLS_MCP_URL` |
+| `services__<resource>__https__0` / `services__<resource>__http__0` | Aspire base URL, HTTPS preferred |
+| `<PROVIDER>_SKILLS_MCP_PATH` | Path appended to a discovered base URL; default `/skillsmcp` |
 
-If none of the above resolve for a provider, it is skipped rather than
-treated as an error.
+Provider resource names are `weatherskills`, `safetyskills`, `skicoachskills`,
+and `lifttrafficskills`. Unconfigured or unreachable providers are logged
+and reported as skipped.
 
-Durable conversation history (Cosmos DB), matching the official sample's env
-var names exactly:
+## Conversation history
+
+When Cosmos is configured, the shared builder attaches
+`agent_framework.azure.CosmosHistoryProvider` and sets `store=False` on the
+chat client to avoid competing server-managed history. The provider uses
+the A2A context/conversation ID as its session ID.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `AZURE_COSMOS_ENDPOINT` | *(unset)* | Cosmos DB account endpoint. Unset ⇒ history is not durable (`conversation_history_backend: "none"`). |
-| `AZURE_COSMOS_DATABASE_NAME` | `db` | Matches the apphost's existing `cosmos.AddCosmosDatabase("db")`. |
-| `AZURE_COSMOS_CONTAINER_NAME` | `skillhistory` | Dedicated container for this provider's `/session_id`-partitioned schema (see rationale above). |
-| `AZURE_COSMOS_KEY` | *(unset)* | Optional Cosmos account key. If unset, falls back to an async Azure AD credential (`azure.identity.aio.DefaultAzureCredential`), matching the local emulator / managed-identity conventions used elsewhere in this repo. |
+| `AZURE_COSMOS_ENDPOINT` | Unset | Cosmos account endpoint |
+| `AZURE_COSMOS_DATABASE_NAME` | `db` | Database |
+| `AZURE_COSMOS_CONTAINER_NAME` | `skillhistory` | Dedicated history container |
+| `AZURE_COSMOS_KEY` | Unset | Optional key; otherwise async Azure credential |
+| `ConnectionStrings__skillhistory` | Unset | Aspire-injected endpoint/key, used when explicit endpoint is absent |
+
+The `skillhistory` container is partitioned on `/session_id`, as required by
+the native history provider. The voice and .NET components' existing
+`conversations` and `sessions` containers use `/conversationId` and are not
+interchangeable with it.
+
+Aspire gives the A2A adapter a `skillHistory` reference. Without Cosmos, its
+history is not durable across process restarts. The Responses host instead
+uses `history_source="agent_server"` when Cosmos is absent, allowing the
+Foundry Agent Server session store to own history when deployed. Standalone
+local hosting does not itself provide that managed session store.
 
 ## Running
 
 ```bash
-# from src/ski-advisor-skill
+# From repository root, with your configured Azure environment:
+aspire start --apphost src/apphost.cs
+
+# For an additional worktree instance:
+aspire start --isolated --apphost src/apphost.cs
+
+# Standalone, from src/ski-advisor-skill:
 uv sync
-uv run start             # start the A2A server (FastAPI + uvicorn) on $PORT (default 8084)
-uv run cli                # interactive CLI, mirrors the reference sample's chat loop
-uv run start-responses  # Responses host: $DEFAULT_AD_PORT, then $PORT, then 8088
+uv run start
+uv run start-responses
+uv run cli
 ```
 
-`GET /health` reports `agent_ready`, `connected_skill_providers`,
-`skipped_skill_providers`, `configured_skill_providers`, and
-`conversation_history_backend` without requiring a live Foundry connection (the
-underlying agent, its MCP connections, and its Cosmos history provider are all
-built lazily on the first A2A request).
+Isolated Aspire runs use private local ports and user-secrets stores. Existing
+authorized Azure configuration/cache can be copied into that private store
+without copying local API keys or committing settings. Starting the full
+AppHost includes Azure resources and the declared Foundry researcher.
 
-## Foundry hosted Responses agent (`start-responses`)
+The A2A host builds the agent lazily. `/health` reports `agent_ready`,
+connected/skipped/configured providers, and `conversation_history_backend`.
+The Responses host builds eagerly in one async lifetime and exposes the
+standard Responses protocol plus host readiness/liveness endpoints. It owns
+the agent's async context; the shared builder uses `enter_agent_context=False`
+to avoid double entry.
 
-In addition to the A2A surface above, this project can be deployed as a
-**Microsoft Foundry hosted agent** speaking the OpenAI-compatible **Responses**
-protocol (`POST /responses`), following the official Agent Framework sample
-[`python/samples/04-hosting/foundry-hosted-agents/responses/tools/main.py`](https://github.com/microsoft/agent-framework/blob/main/python/samples/04-hosting/foundry-hosted-agents/responses/tools/main.py)
-and its accompanying
-[Learn doc](https://learn.microsoft.com/en-us/agent-framework/hosting/foundry-hosted-agent).
-This is a second entry point (`skills_orchestrator_python/foundry_responses_main.py`,
-`uv run start-responses`) alongside — not instead of — the existing A2A server
-(`main.py`, `uv run start`); both build and expose the **same** underlying
-agent (weather/safety/ski-coach/lift-traffic skills over MCP, the Foundry ski
-researcher as a direct tool, Cosmos-backed history when configured), via
-`skills_orchestrator_python/agent_builder.py`'s shared, host-agnostic
-`build_orchestrator_agent(...)` — factored out of what was previously private
-to `agent_executor.SkillsOrchestratorExecutor` so neither surface duplicates
-the MCP-connection/skills-discovery/researcher-tool/Cosmos-history wiring.
+Aspire publishes the Python project using its `Dockerfile`; the Responses
+host is named `skiadvisorskill-ha` in Foundry. The Docker entrypoint also
+recognizes Aspire's Uvicorn arguments for the A2A adapter. The frontend uses
+the configured local Responses endpoint during development.
 
-- Served by `agent_framework_foundry_hosting.ResponsesHostServer`
-  (`agent-framework-foundry-hosting>=1.0.0b260903`, pinned explicitly in
-  `pyproject.toml` because the `history_source` parameter used below did not
-  exist in earlier prereleases). Internally this wraps
-  `azure.ai.agentserver.responses`'s ASGI app and serves it with `hypercorn`.
-- Listens on `DEFAULT_AD_PORT`, then `PORT`, then **8088** (matching Aspire's
-  hosted-agent port convention), and `HOST` (default `0.0.0.0`).
-- Exposes **only** the Responses protocol routes (`POST /responses`,
-  `GET/POST /responses/{id}`, `POST /responses/{id}/cancel`, `GET
-  /responses/{id}/input_items`) — no A2A routes, no `/health`. This mirrors
-  how the existing .NET `ski-advisor-a2a` project already exposes
-  `MapFoundryResponses()` instead of A2A routes once wrapped in
-  `.AsHostedAgent(...)`.
-- **History source selection** (`history_source` on `ResponsesHostServer`):
-  - The AppHost intentionally does not give the Foundry-hosted resource a
-    `skillHistory` reference. With no Cosmos provider configured,
-    `history_source="agent_server"` lets Foundry's own Agent Server session
-    store durably own conversation history for this hosted agent. This is a
-    *better*
-    fallback than the A2A surface gets in the same unconfigured case (which
-    only keeps history for the lifetime of a single in-memory `AgentSession`),
-    though it's only meaningful once actually deployed as a Foundry hosted
-    agent — running `uv run start-responses` standalone with no Foundry
-    project behind it has no session store to persist to.
-- Builds the agent **once**, eagerly, at process startup (unlike the A2A
-  surface, which builds lazily on the first request) — `ResponsesHostServer`
-  needs an already-constructed `agent_framework.Agent` at construction time.
-  Because MCP's `streamable_http_client`/`ClientSession` objects are bound to
-  the event loop that opened them, the build, the `ResponsesHostServer`
-  construction, and `await server.run_async(...)` all run inside one
-  `asyncio.run()` call, wrapped in a single `async with AsyncExitStack():` so
-  every MCP session, the Cosmos provider, the researcher agent, and the chat
-  client are released together right after `run_async()` returns.
-- Unlike the sample's default `enter_agent_context=True` construction,
-  `agent_builder.build_orchestrator_agent(..., enter_agent_context=False)` is
-  used here: `ResponsesHostServer` lazily enters the agent's own async context
-  itself (on the first inbound request) and registers its own
-  `shutdown_handler` for exiting it — this project's own exit stack must not
-  pre-enter that context or double-manage its teardown.
-- A `Dockerfile` (and `.dockerignore`) exist at this project's root purely so
-  Aspire's **publish**-mode wiring can containerize both Python resources that
-  share this working directory. Its entrypoint keeps `uv run --no-sync
-  start-responses` as the default while recognizing the command-only
-  `skills_orchestrator_python.main:app --host ...` arguments generated for
-  `skiadvisorskilla2a` and dispatching them through Uvicorn. It has no effect
-  on local `aspire run`/dev-loop execution.
+## Local coverage
 
-## AppHost wiring
+Run the stdlib unittest suite with the actual native MAF tool loop and
+scripted model/MCP fixtures:
 
-`src/apphost.cs` registers every resource this orchestrator needs.
-
-**New Cosmos container** (alongside the existing `conversations`/`sessions`,
-both `/conversationId`-partitioned):
-
-```csharp
-var skillHistory = db.AddContainer("skillhistory", "/session_id");
+```bash
+cd src/ski-advisor-skill
+uv run python -m unittest discover -s tests -v
 ```
 
-**Four paired MCP skill-provider resources**:
-distinct from that specialist's existing `<key>-agent-a2a` resource, all
-mapping their MCP endpoint at `/skillsmcp`:
+For real local .NET MCP integration, build the providers first:
 
-| Resource name | Project |
-| --- | --- |
-| `weatherskills` | `./weather-skills/WeatherSkill.Dotnet.csproj` |
-| `safetyskills` | `./safety-skills/SafetySkill.Dotnet.csproj` |
-| `skicoachskills` | `./ski-coach-skills/SkiCoachSkill.Dotnet.csproj` |
-| `lifttrafficskills` | `./lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj` |
-
-**This orchestrator's A2A resource**:
-
-```csharp
-var skillsAdvisorA2A = builder.AddUvicornApp(
-        "skiadvisorskilla2a",
-        "./ski-advisor-skill",
-        "skills_orchestrator_python.main:app")
-    .WithUv()
-    .WithExternalHttpEndpoints()
-    .WithHttpHealthCheck("/health")
-    .WithReference(deployment).WaitFor(deployment)
-    .WithReference(weatherSkill).WaitFor(weatherSkill)
-    .WithReference(safetySkill).WaitFor(safetySkill)
-    .WithReference(coachSkill).WaitFor(coachSkill)
-    .WithReference(liftSkill).WaitFor(liftSkill)
-    .WithReference(skiResearcher).WaitFor(skiResearcher)
-    .WithReference(skillHistory).WaitFor(skillHistory)
-    .WithComputeEnvironment(aca);
-skillsAdvisorA2A.WithEnvironment(
-    A2AAgentBaseUrlEnvironmentVariable,
-    skillsAdvisorA2A.GetEndpoint("http"));
+```bash
+dotnet build src/weather-skills/WeatherSkill.Dotnet.csproj
+dotnet build src/safety-skills/SafetySkill.Dotnet.csproj
+dotnet build src/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
+dotnet build src/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
+cd src/ski-advisor-skill
+RUN_LIVE_MCP_TESTS=1 uv run python -m unittest discover -s tests -p test_live_mcp.py -v
 ```
 
-`.WithReference(skillHistory)` (a *container*-level reference, matching how
-`voice-advisor-agent` references its own `conversations` container) is what
-injects `ConnectionStrings__skillhistory` — parsed by `get_cosmos_history_config()`
-into `AZURE_COSMOS_ENDPOINT`/`AZURE_COSMOS_KEY` (see Configuration above).
+The opt-in suite uses ephemeral loopback provider processes and deterministic
+HTTP telemetry fixtures. It does not start Aspire or deploy Azure resources.
 
-The paired .NET orchestrator resource is `skiadvisora2a`.
-`voiceadvisorskill` references `skiadvisorskilla2a` so the voice bridge can
-route to it under the Voice Live tool name `ski_advisor_skill`.
-
-**Foundry-hosted Responses resource**:
-
-```csharp
-var skillsAdvisor = builder.AddPythonExecutable(
-        "skiadvisorskill",
-        "./ski-advisor-skill",
-        "start-responses")
-    .WithUv()
-    .WithReference(deployment).WaitFor(deployment)
-    .WithReference(weatherSkill).WaitFor(weatherSkill)
-    .WithReference(safetySkill).WaitFor(safetySkill)
-    .WithReference(coachSkill).WaitFor(coachSkill)
-    .WithReference(liftSkill).WaitFor(liftSkill)
-    .WithReference(skiResearcher).WaitFor(skiResearcher)
-    .WithComputeEnvironment(aca)
-    .WithHttpEndpoint(targetPort: 8089)
-    .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0");
-```
-
-- **Publish mode**: for the `ExecutableResource` created by
-  `AddPythonExecutable`,
-  `AsHostedAgent` calls `PublishAsDockerFile()` automatically, building from
-  the `Dockerfile` this project now ships at its root (`./ski-advisor-skill/Dockerfile`).
-- **Hosted-agent deployment resource name**: Aspire's own convention names the
-  generated Foundry-deployment child resource `"{resourceName}-ha"`:
-  `skiadvisorskill-ha`. The frontend and responses gateway use this exact name.
-- **Endpoint path**: `/responses` (`POST`), plus `/responses/{id}`
-  (`GET`/`POST`), `/responses/{id}/cancel` (`POST`), and
-  `/responses/{id}/input_items` (`GET`) — no path prefix is configured, so
-  these are served at the resource's root, exactly like `ski-advisor-a2a`'s
-  `MapFoundryResponses()`.
+The [migration article](../../BLOG_DISTRIBUTED_AGENT_SKILLS.md#what-changed-in-latency-and-tokens)
+compares the running A2A and native-skills paths using fresh conversations and
+the exact prompt `considering weather and waiting time, where should i start?`.
+Its token accounting includes every A2A specialist's leaf model spans, rather
+than only the top-level Responses usage.

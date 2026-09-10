@@ -407,6 +407,12 @@
   border-radius: 0 16px 16px 0;
 }
 
+.benchmark-table th,
+.benchmark-table td {
+  font-size: 0.36em;
+  padding: 0.45rem 0.55rem;
+}
+
 .architecture-schema {
   display: grid;
   gap: 0.55rem;

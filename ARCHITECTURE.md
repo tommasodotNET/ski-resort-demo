@@ -8,14 +8,14 @@ The system is built using:
 
 * **Microsoft Agent Framework (MAF)** as the agent orchestration layer
 * **Agent-to-Agent (A2A)** for the existing agent-as-tool path
-* **SEP-2640 Agent Skills over MCP** for the parallel skills path
+* **Agent Skills over MCP**, using a pinned historical SEP-2640 draft profile, for the parallel skills path
 * **[Aspire](https://aspire.dev)** as the local development orchestrator
 * Polyglot microservices (.NET + Python + Go)
 * Real-time fake telemetry generator
 * Event-driven communication
 * A real-time frontend dashboard
 
-The app deliberately exposes two equivalent orchestration paths:
+The app deliberately exposes two alternative orchestration paths:
 
 * `skiadvisora2a`: the existing .NET orchestrator consuming A2A agents as tools.
 * `skiadvisorskill`: a Python orchestrator discovering .NET-hosted skills over MCP.
@@ -25,6 +25,11 @@ resources (`weatheragenta2a`/`weatherskills`, `safetyagenta2a`/`safetyskills`,
 `skicoachagenta2a`/`skicoachskills`, and
 `lifttrafficagenta2a`/`lifttrafficskills`). The existing Foundry ski researcher
 remains a direct agent tool available to both orchestrators.
+
+The skills advisor is Python and its MCP providers are .NET; the original
+A2A advisor is .NET with Python/.NET specialists. These are implementation
+choices, not required language changes. Both paths expose the same domains,
+but model-selected work and answers need not be equivalent.
 
 ---
 
@@ -54,18 +59,28 @@ remains a direct agent tool available to both orchestrators.
 ## Microsoft Agent Framework (MAF)
 
 The A2A path exposes specialist Agent Cards and invokes them as remote tools.
-The skills path exposes `skill://index.json`, `skill://<name>/SKILL.md`, and
-dynamic sibling resources from independent .NET MCP services. The Python
-orchestrator combines those skills with the Foundry researcher agent as a normal tool and uses
-`MCPSkillsSource` for progressive disclosure and `CosmosHistoryProvider` with a
-dedicated `/session_id`-partitioned `skillhistory` container.
+The skills path exposes `skill://index.json` and `skill://<name>/SKILL.md`
+instruction resources alongside twelve typed tools on independent .NET MCP
+services. The Python orchestrator composes native `SkillsProvider` /
+`MCPSkillsSource` with
+`MCPStreamableHTTPTool(use_progressive_disclosure=True)`. The Foundry
+researcher remains a separate agent tool. `CosmosHistoryProvider` uses a
+dedicated `/session_id`-partitioned `skillhistory` container for the A2A host.
+
+The index-based skill profile is a historical Draft revision, not the newest
+SEP contract. As of September 10, 2026, the newer text is marked Accepted but
+the PR remains unmerged; it specifies `skills/list` and `skills/get` instead.
+Core MCP resources/tools and MAF's experimental progressive API are distinct.
+See [compatibility details and pinned references](src/ski-advisor-skill/README.md#skill-transport-compatibility).
 
 ## Agent as a Tool vs Agent as a Skill
 
 The term **agent as a skill** describes how this sample maps an existing
 specialist-agent boundary onto Agent Skills. The skill is not itself an agent.
-It carries the same bounded domain context—description, instructions, references,
-and operations—but lets the advisor model execute that context directly.
+The Agent Card's name and description become discovery metadata, and its
+system prompt becomes an enriched `SKILL.md`. Authentication and transport
+remain infrastructure concerns. Tools stay tools, now served over MCP by the
+remote domain services; the advisor selects them without a specialist model.
 
 ```mermaid
 flowchart LR
@@ -77,10 +92,12 @@ flowchart LR
 
     subgraph Skills["Agent as a skill"]
         OS[Advisor model] -->|load_skill| MD[Remote SKILL.md]
-        MD -->|instructions name a resource| OS
-        OS -->|read_skill_resource| DR[Dynamic MCP resource]
-        DR -->|service/API call| DATA[Live resort data]
-        DATA --> DR --> OS
+        MD -->|instructions name tools| OS
+        OS -->|native load_tool| SDK[MAF tool registration]
+        SDK -->|selected function schemas| OS
+        OS -->|direct MCP tools/call| MT[Remote MCP tool]
+        MT -->|service/API call| DATA[Live resort data]
+        DATA --> MT --> OS
     end
 ```
 
@@ -88,72 +105,36 @@ flowchart LR
 |---|---|---|
 | Initial discovery | A2A Agent Card becomes an advisor function | `skill://index.json` advertises name and description |
 | Domain instructions | Owned by the specialist model | Loaded into the advisor run from `SKILL.md` |
-| Operation selection | Specialist model selects a function | Advisor model selects a sibling resource |
-| Remote execution | Specialist tool executes behind the A2A agent | MCP resource handler executes on the skill provider |
+| Operation selection | Specialist model selects a function | Advisor model loads named MCP functions using the native SDK loader |
+| Remote execution | Specialist tool executes behind the A2A agent | Registered function calls the skill provider's MCP tool |
 | Model calls | Advisor + specialist | Advisor only |
 
 ## MCP Skill Contract
 
-Each provider exposes the same three layers:
+Each provider separates instructional resources from executable tools:
 
 ```text
-skill://index.json                       # L1 discovery metadata
-skill://weather/SKILL.md                 # L2 domain instructions
-skill://weather/forecast/{hours}         # L3 dynamic sibling resource
+skill://index.json                       # Discovery metadata
+skill://weather/SKILL.md                 # Domain instructions and named-tool guidance
+MCP tools/list                          # Typed operation definitions, host-side discovery
+MCP tools/call weather_forecast          # Remote operation execution
 ```
 
-The server-side resource handler is executable application code:
-
-```csharp
-[McpServerResourceType]
-public sealed class WeatherSkillResources(WeatherDataService weather)
-{
-    [McpServerResource(
-        UriTemplate = "skill://weather/forecast/{hours}",
-        Name = "Weather Forecast",
-        MimeType = "application/json")]
-    public Task<string> GetForecast(int hours) =>
-        weather.GetForecastAsync(hours);
-}
-```
-
-`McpServerResource` describes how the method is reached over MCP. When the
-advisor reads `skill://weather/forecast/24`, the MCP server binds `24` to
-`hours`, executes the method remotely, and returns its result as resource
-content. The handler may call `datagenerator`, a database, or another downstream
-service.
-
-The providers intentionally register no MCP domain tools:
+Resources contain only discovery metadata and instructional content.
+Operational tool handlers call the existing domain services and return
+structured results. The provider has no specialist model:
 
 ```csharp
 builder.Services.AddMcpServer()
     .WithHttpTransport()
-    .WithResources<WeatherSkillResources>();
+    .WithResources<WeatherSkillResources>()
+    .WithTools<WeatherTools>();
 
 app.MapMcp("/skillsmcp");
 ```
 
-The Python advisor likewise registers no direct provider tools:
-
-```python
-sources = [
-    MCPSkillsSource(client=weather_session),
-    MCPSkillsSource(client=safety_session),
-    MCPSkillsSource(client=coach_session),
-    MCPSkillsSource(client=lift_session),
-]
-
-skills = SkillsProvider(AggregatingSkillsSource(sources))
-
-agent = client.as_agent(
-    name="skiadvisorskill",
-    context_providers=[skills, history],
-    tools=[ski_researcher_agent.as_tool(...)],
-)
-```
-
-Agent Framework advertises the generic `load_skill` and
-`read_skill_resource` functions. A typical weather request proceeds as follows:
+The Python advisor uses native MAF skill loading and experimental progressive
+MCP tool registration. A typical weather request proceeds as follows:
 
 ```mermaid
 sequenceDiagram
@@ -164,25 +145,41 @@ sequenceDiagram
 
     O->>M: resources/read skill://index.json
     M-->>O: weather name + description
-    O->>L: prompt + advertised skill
+    O->>M: tools/list (paginated)
+    M-->>O: tool catalog held by SDK
+    O->>L: skill summaries + native loader functions
     L->>O: load_skill("weather")
     O->>M: resources/read skill://weather/SKILL.md
-    M-->>O: instructions + resource templates
+    M-->>O: instructions + tool names
     O->>L: loaded weather instructions
-    L->>O: read_skill_resource("weather", "forecast/24")
-    O->>M: resources/read skill://weather/forecast/24
+    L->>O: weather native load_tool (forecast)
+    O->>L: register forecast function and schema for next iteration
+    L->>O: invoke registered forecast function (hours=24)
+    O->>M: tools/call weather_forecast {"hours":24}
     M->>D: GET current weather data
     D-->>M: telemetry JSON
-    M-->>O: dynamic resource content
+    M-->>O: structured tool result
     O->>L: current forecast
     L-->>O: final answer
 ```
 
-Dynamic resources are tool-like because reading them can execute arbitrary
-server-side logic. They remain resources semantically: the model chooses a
-relative URI described by `SKILL.md`, rather than invoking a domain function
-with a JSON Schema. This keeps the provider behind the Agent Skills abstraction
-and preserves progressive disclosure.
+Skill-first selection is model guidance, not authorization or an atomic
+load-and-register operation. A model can invoke native loaders directly.
+Calling a provider's native `list_mcp_tools` reveals that provider's allowed
+catalog; named-tool guidance normally avoids this. Configured endpoints,
+provider prefixes, and native tool approval policy remain separate from
+skill instructions. The SDK's mutable progressive-tool state has an isolated
+lifetime rather than being shared between concurrent users. The 98-line `NativeMCPToolsMiddleware`
+supplies per-invocation native runtime tool objects using public APIs. It does
+not select operations or implement loading or dispatch. Shared MCP connections
+remain open for app lifetime; tool objects remain alive through their response
+streams. See the [skills advisor README](src/ski-advisor-skill/README.md#tool-lifetime-and-approval).
+
+For genuinely small catalogs, eager loading with the standard SDK avoids this
+progressive-state middleware entirely. The resort's twelve tools illustrate a
+larger-catalog pattern, not a requirement to defer every small set of schemas.
+See the [measured comparison](BLOG_DISTRIBUTED_AGENT_SKILLS.md#what-changed-in-latency-and-tokens)
+for actual model-call counts, latency, whole-system tokens, and limitations.
 
 ---
 
