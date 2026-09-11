@@ -250,11 +250,13 @@ var remoteAgent = card.AsAIAgent(httpClient);
 var specialistTool = remoteAgent.AsAIFunction();
 ```
 
-The new advisor registers skill sources and connects to MCP tool catalogs instead. Native MAF `SkillsProvider` and `MCPSkillsSource` handle skill discovery and instruction loading.
+The new advisor connects to MCP providers instead. Native MAF `SkillsProvider` and `MCPSkillsSource` handle skill discovery and instruction loading.
 
 The demo also defers tool exposure until the model selects a skill. **For a small catalog, this is optional:** register the MCP tools upfront and load only the instructions on demand. The resort's four skills and twelve tools illustrate a pattern intended for larger catalogs.
 
-Loading a skill should give the advisor both the instructions and the tools to follow them. In this sample, `SkillToolsMiddleware` connects those two steps: once `load_skill` succeeds, it uses MAF's `add_tools` API to make the associated MCP provider's tools available on the next model iteration. This small piece of advisor-side code ([`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py)) defines which tools accompany each skill; MAF handles their registration and invocation.
+In this sample, loading a skill gives the advisor both the instructions and the tools to follow them. `SkillToolsMiddleware` connects those two steps: once `load_skill` succeeds, it uses MAF's `add_tools` API to make the associated MCP provider's tools available on the next model iteration. This small piece of advisor-side code ([`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py)) defines which tools accompany each skill; MAF handles their registration and invocation.
+
+The code in [`agent_builder.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/agent_builder.py) wires the skill provider and middleware into the advisor:
 
 ```python
 skill_tools = SkillToolsMiddleware(connections)
@@ -274,9 +276,9 @@ agent = client.as_agent(
 await skill_tools.initialize(agent, exit_stack)
 ```
 
-The wiring separates what the host knows from what the model sees. At startup, the host discovers the skills and retrieves each provider's tool catalog through MCP `tools/list`. The model initially receives only the skill summaries and loading helpers, alongside the existing researcher tool—not every provider's operation schemas.
+`context_providers=[skills]` makes the skills discoverable and their instructions loadable. `middleware=[skill_tools]` connects a successful skill load to the corresponding tool catalog.
 
-`context_providers=[skills]` makes those skills discoverable and their instructions loadable. `middleware=[skill_tools]` connects a successful skill load to the corresponding tool catalog. The native MCP wrappers use `use_progressive_disclosure=False` because this sample makes tools available as a group when a skill loads, rather than asking the model to load individual tools.
+The wiring separates what the host knows from what the model sees. At startup, the host discovers the skills and retrieves each provider's tool catalog through MCP `tools/list`. The model initially receives only the skill summaries and loading helpers, alongside the existing researcher tool—not every provider's operation schemas.
 
 For example, when the advisor calls `load_skill("weather")`, MAF retrieves the weather instructions. After confirming that the load succeeded, the middleware makes all three weather tools available for the current run. On the next model iteration, the advisor sees their descriptions and parameter schemas and chooses which operation to call. Tools from other providers remain out of context until their skills are loaded; making a tool available does not execute it.
 
