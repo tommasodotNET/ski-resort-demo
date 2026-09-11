@@ -180,9 +180,9 @@ description: Assess current resort weather, forecasts, and storm threats.
    Prioritize safety and do not invent missing observations.
 ```
 
-These are the MCP tool names advertised by the weather provider, such as `weather_forecast`. They identify operations to invoke, not functions for loading skills or tools. The advisor host adds a provider prefix to the callable names the model sees, as shown below. A skill can also refer to supporting documentation using relative paths, without naming a particular SDK's resource-reading helper.
+The procedure refers to MCP operations by name, such as `weather_forecast`, and explains when to use them. MCP supplies the tool descriptions and parameter schemas the advisor needs to make the calls.
 
-The actual demo adds a separate host-specific section explaining that loading the skill makes its provider's tools available on the next model iteration. It lists their provider-prefixed callable names. That is integration guidance for this host, not a portable requirement of the skill format. The model chooses operations using the descriptions and schemas supplied by MCP, not just those names.
+The demo supplements this procedure with a short section describing how tools become available in this advisor: loading the skill exposes its provider's tools on the next model iteration. It also lists the callable names with the host's provider prefix—for example, `weather_forecast` becomes `weather_weather_forecast`. This keeps the domain procedure separate from the details of how the host exposes its tools.
 
 ## Step 4: expose the specialist's operations as MCP tools
 
