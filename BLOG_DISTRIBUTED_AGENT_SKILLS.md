@@ -1,32 +1,28 @@
 # From agents as tools to distributed skills over MCP
 
-*Keep domain services distributed. Move the specialist's instructions into the advisor, and keep its operations as tools.*
+*Keep your domain services distributed. Move the specialist's instructions, not another model, into the orchestrator.*
 
-A multi-agent system often starts with a straightforward design: one agent understands the user's request, delegates to specialists, and combines their answers.
+A multi-agent system often starts with a straightforward design: one agent understands the user's request, delegates to specialist agents, and combines their answers.
 
-That was the starting point for my ski resort demo. An advisor calls weather, safety, ski-coach, and lift-traffic agents over Agent-to-Agent (A2A). Each specialist has its own instructions, tools, and model loop.
+That was the starting point for my ski resort demo. A resort advisor calls specialists for weather, safety, ski coaching, and lift traffic. Each specialist owns its instructions and tools, and the advisor invokes it through Agent-to-Agent (A2A).
 
-It works. But does every specialist need to reason independently, or does the advisor mainly need its instructions and access to its operations?
+It works. But it also raises a useful question:
 
-To explore that distinction, the demo now has a second path: **distributed Agent Skills and tools over Model Context Protocol (MCP), composed with native Microsoft Agent Framework (MAF) capabilities**. Domain services still run remotely. Their instructions enter the advisor's context when needed, and their operations execute as ordinary MCP tools without another specialist model.
+**Does every specialist need its own model execution, or does the parent mostly need the specialist's instructions and access to its operations?**
 
-**Language note:** the skills advisor is Python and its four MCP providers are .NET. The A2A advisor is .NET, with Python and .NET specialists. These are independent implementation choices, not a requirement to rewrite services in another language. They explain why the examples below use both languages.
+To explore that distinction, I added a second architecture to the same application: **distributed Agent Skills and tools served over Model Context Protocol (MCP)**.
 
-**Compatibility note, checked September 10, 2026:** the demo uses a pinned, historical [Draft profile of SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/b3f015a7929041dada4b0eaf5a657b30d4f5d6d1/seps/2640-skills-extension.md). The proposal's latest text says Accepted, but its [PR remains unmerged](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) and newer discovery differs. Do not confuse this version-specific skill-transport profile with established core MCP resources and tools, or with MAF's separately experimental progressive-loading API.
+The services still run separately. The domain boundaries still exist. What changes is where the reasoning happens.
 
-## A small demo of a larger-catalog problem
+This post compares those two paths, walks through the migration from specialist agents to distributed skills and MCP tools, and uses the demo's execution traces to examine what changed in model calls, latency, and token consumption.
 
-The resort has only four skills and twelve tools. It is a simple setting for illustrating a problem that becomes more interesting with a large catalog: how to give the model the right procedures and tool schemas without placing everything in its initial context.
+## Two patterns, two kinds of delegation
 
-**For a genuinely small catalog, start simpler:** register the configured providers' MCP tools upfront using the standard SDK. You can still load skill instructions on demand. Progressive tool loading is optional, and the skill-to-provider registration hook discussed below is unnecessary in that eager-loading setup.
+### Agent as a tool: delegate the task
 
-The goal here is to explore the larger-catalog pattern, not to claim that twelve tools require it.
+In the original architecture, the advisor sees each remote agent as a function it can call.
 
-## Two kinds of delegation
-
-### Agent as a tool: delegate a task
-
-The A2A advisor sees each remote agent as a callable function:
+For a weather question, the flow looks like this:
 
 ```mermaid
 sequenceDiagram
@@ -45,11 +41,15 @@ sequenceDiagram
     O-->>U: Final answer
 ```
 
-The specialist interprets a delegated question, chooses operations, and writes an answer. The advisor then interprets that answer. This is useful when the specialist needs autonomy, private context, a specialized model, or a substantial independent workflow.
+The weather agent is an independent reasoning component. It interprets the delegated question, selects its tools, and writes a response. The advisor then interprets that response and produces the final answer.
 
-### Agent as a skill: share a procedure, invoke an operation
+This is a good fit when the specialist needs autonomy: its own model, private context, a substantial workflow, or an independent lifecycle.
 
-The MCP provider instead publishes skill metadata, instructional documents, and typed tools:
+### Distributed skill: delegate the operation, share the instructions
+
+In the skills architecture, the weather service no longer needs a model to interpret that question.
+
+Instead, it publishes a description, a `SKILL.md` document, and typed MCP tools. The advisor loads the instructions when needed, receives the associated tool definitions, and uses them to select the next operation. The advisor host uses Microsoft Agent Framework (MAF) to manage this flow:
 
 ```mermaid
 sequenceDiagram
@@ -75,9 +75,21 @@ sequenceDiagram
     O-->>U: Final answer
 ```
 
-There is no weather-agent model in the second path. There is still a weather service executing application code.
+There is no weather-agent model in this second path. There is still a weather service executing application code.
 
-This is not "MCP replaces A2A everywhere." It changes the reasoning boundary for bounded capabilities. Nor does "one agent" mean "one model call": skill selection, operation selection, and answer generation can require several iterations.
+A distributed skill is not an agent wrapped in Markdown. It gives the advisor a procedure to follow; the provider's tools execute the operations that procedure calls for.
+
+| Concern | Agent as a tool | Distributed skill |
+|---|---|---|
+| What the parent discovers | A remote agent and its capabilities | A competence it can load |
+| Where specialist instructions run | In the specialist's model context | In the parent's model context |
+| Who selects domain operations | The specialist model | The parent model |
+| What executes remotely | An agent loop and its tools | MCP tool handlers and domain services |
+| What remains distributed | Agents, services, data | Skill providers, services, data |
+
+This is not "MCP replaces A2A everywhere." A2A and MCP address different boundaries: an autonomous agent can remain an agent, while a bounded competence can become a skill.
+
+It is also not "one agent means one model call." Loading instructions, calling operations, and producing an answer can still require several model requests. The difference is that the migrated domain no longer adds its own nested reasoning loop.
 
 ## What actually migrates?
 
@@ -97,38 +109,23 @@ Most importantly, **tools stay tools**. The migration moves instructions and ope
 
 Both architectures remain available in this demo. The web-backed research agent also remains a direct agent tool in both advisors. Its independent reasoning is a separate choice from how weather or lift data is retrieved.
 
-## 1. Separate domain logic from the specialist runtime
+**Language note:** the skills advisor is Python and its four MCP providers are .NET. The A2A advisor is .NET, with Python and .NET specialists. These are independent implementation choices, not a requirement to rewrite services in another language. They explain why the examples below use both languages.
 
-Start inside the specialist, not at its endpoint. Identify its instructions, model loop, and functions that reach the business system.
+## Step 1: separate the competence from the agent runtime
 
-For weather, retrieving conditions and calculating the demonstration forecast already belong to a domain service. Expose that capability through a typed MCP adapter. The following is an excerpt from `WeatherTools.cs`; the result records and JSON-to-record helper are defined in the same file:
+Start inside the specialist, not at its endpoint.
 
-```csharp
-[McpServerTool(
-    Name = "weather_forecast",
-    ReadOnly = true,
-    Destructive = false,
-    UseStructuredContent = true)]
-[Description("Generate a demo hourly forecast from current conditions. Forecast variation is randomized.")]
-public async Task<WeatherForecast> Forecast(
-    [Description("Forecast horizon in hours, from 1 through 24."),
-     Range(1, 24)] int hours,
-    CancellationToken cancellationToken)
-{
-    if (hours is < 1 or > 24)
-        throw new ArgumentOutOfRangeException(
-            nameof(hours), "Hours must be between 1 and 24.");
+A typical specialist combines three things: instructions, an agent/model runtime, and functions that reach the business system. Separate those responsibilities before changing the protocol.
 
-    return Read<WeatherForecast>(
-        await service.GetForecastAsync(hours, cancellationToken));
-}
-```
+For weather, retrieving conditions and calculating the demonstration forecast already belong to a domain service. That service is the reusable part: it does not need another model to read an observation or calculate a forecast.
 
-The .NET MCP SDK publishes the tool definition and binds calls to the method. The handler validates the range, passes cancellation through, and delegates to the existing service. Other tools return current conditions, storm assessments, lift waits, safety information, and coaching results.
+Keep the service's business rules, data access, and validation. Move the specialist's instructions into a skill, expose its operations through MCP tools, and remove its model loop only if the advisor can take over operation selection and result interpretation.
 
 "No model in the provider" does not mean constant output. The demo's telemetry changes over time, and its forecast uses randomized variation. The distinction is application logic versus another agent loop.
 
-## 2. Publish discovery metadata and instructional resources
+## Step 2: turn the Agent Card description into skill discovery
+
+An orchestrator does not need every specialist's full instructions on every request. It needs enough information to decide which competence is relevant.
 
 Each provider exposes its own MCP endpoint at `/skillsmcp`. Its resource surface contains only:
 
@@ -155,11 +152,9 @@ For weather, the index is:
 
 The description carries the former Agent Card's routing information: when this competence is useful. It does not transfer the card's network or security configuration.
 
-This index follows the historical draft profile pinned above and the installed MAF `MCPSkillsSource` implementation. The [September 3 proposal revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/d6b31a03504c15677d49b922b6b6ace0ef65728d/seps/2640-skills-extension.md) is marked Accepted and specifies `skills/list` and `skills/get`; the demo does not implement those methods. Its PR was still open and unmerged when checked. Treat this example as a pinned draft-era convention, not the latest extension contract or a released core MCP requirement.
-
 The `skill://` URI identifies content on an already configured MCP connection. It is not a hostname to resolve or a way for skill text to choose a new network endpoint. Additional supporting files, when needed, remain instructional resources.
 
-## 3. Enrich the former system prompt into a skill
+## Step 3: move the specialist's procedure into `SKILL.md`
 
 The description answers **when to use the competence**. `SKILL.md` answers **how to apply it**.
 
@@ -185,13 +180,40 @@ description: Assess current resort weather, forecasts, and storm threats.
    Prioritize safety and do not invent missing observations.
 ```
 
-These are domain tool names, not host-specific loading functions. A skill can also refer to supporting documentation using relative paths, without naming a particular SDK's resource-reading helper.
+These are the MCP tool names advertised by the weather provider, such as `weather_forecast`. They identify operations to invoke, not functions for loading skills or tools. The advisor host adds a provider prefix to the callable names the model sees, as shown below. A skill can also refer to supporting documentation using relative paths, without naming a particular SDK's resource-reading helper.
 
 The actual demo adds a separate host-specific section explaining that loading the skill makes its provider's tools available on the next model iteration. It lists their provider-prefixed callable names. That is integration guidance for this host, not a portable requirement of the skill format. The model chooses operations using the descriptions and schemas supplied by MCP, not just those names.
 
-## 4. Host instructions and tools together
+## Step 4: expose the specialist's operations as MCP tools
 
-The weather provider registers both resource and tool handlers:
+The operations remain tools; what changes is how the advisor reaches them. Instead of asking a specialist agent to choose an operation, it invokes a typed MCP tool directly.
+
+The following is an excerpt from `WeatherTools.cs`; the result records and JSON-to-record helper are defined in the same file:
+
+```csharp
+[McpServerTool(
+    Name = "weather_forecast",
+    ReadOnly = true,
+    Destructive = false,
+    UseStructuredContent = true)]
+[Description("Generate a demo hourly forecast from current conditions. Forecast variation is randomized.")]
+public async Task<WeatherForecast> Forecast(
+    [Description("Forecast horizon in hours, from 1 through 24."),
+     Range(1, 24)] int hours,
+    CancellationToken cancellationToken)
+{
+    if (hours is < 1 or > 24)
+        throw new ArgumentOutOfRangeException(
+            nameof(hours), "Hours must be between 1 and 24.");
+
+    return Read<WeatherForecast>(
+        await service.GetForecastAsync(hours, cancellationToken));
+}
+```
+
+The .NET MCP SDK publishes the tool definition and binds calls to the method. The handler validates the range, passes cancellation through, and delegates to the existing service. The skill's prose guides operation selection; it does not replace the parameter schema or server-side validation.
+
+The provider hosts these tools alongside the instructional resources over Streamable HTTP:
 
 ```csharp
 builder.Services.AddMcpServer(options =>
@@ -213,12 +235,28 @@ app.Run();
 
 This shortened snippet omits ordinary domain-service and HTTP-client registration. `resources/read` retrieves instructions. `tools/list` supplies authoritative operation definitions. **`tools/call` executes the business operations.**
 
-## 5. Compose native skills and progressive MCP tools
+## Step 5: replace remote-agent registrations with skills and tools
 
-The Python advisor uses the standard `SkillsProvider` and `MCPSkillsSource`.
-`SkillToolsMiddleware` supplies the small integration hook. Its `source`
-aggregates native `CachingSkillsSource` wrappers around the configured MCP
-sources, so the provider and hook share the same cached skill objects:
+Previously, the advisor resolved an A2A Agent Card and registered the remote agent as an AI function. In shortened form:
+
+```csharp
+var resolver = new A2ACardResolver(
+    endpoint,
+    httpClient,
+    agentCardPath: "/.well-known/agent-card.json");
+
+var card = await resolver.GetAgentCardAsync();
+var remoteAgent = card.AsAIAgent(httpClient);
+var specialistTool = remoteAgent.AsAIFunction();
+```
+
+The new advisor registers skill sources and connects to MCP tool catalogs instead. Native MAF `SkillsProvider` and `MCPSkillsSource` handle skill discovery and instruction loading.
+
+The demo also defers tool exposure until the model selects a skill. **For a small catalog, this is optional:** register the MCP tools upfront and load only the instructions on demand. The resort's four skills and twelve tools illustrate a pattern intended for larger catalogs, not a requirement to add loading machinery for twelve tools.
+
+`SkillToolsMiddleware` supplies that deferred association. It runs **inside the advisor host**, not in an MCP provider. After native `load_skill` successfully returns the instructions, it calls `context.add_tools(native.functions)` to expose the corresponding provider's entire tool group for the current run. MAF does not infer this skill-to-provider binding automatically; the middleware is the sample's adapter, not another model or an operation dispatcher.
+
+The class is defined in [`native_mcp.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/native_mcp.py). The shared [`build_orchestrator_agent` function in `agent_builder.py`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/skills_orchestrator_python/agent_builder.py) attaches it for both the Responses and A2A hosting surfaces of the skills advisor. This shortened wiring omits history and client setup; `connections` contains the already-open MCP sessions:
 
 ```python
 skill_tools = SkillToolsMiddleware(connections)
@@ -227,62 +265,7 @@ skills = SkillsProvider(
     disable_load_skill_approval=True,
     disable_read_skill_resource_approval=True,
 )
-```
 
-For each provider, native `MCPStreamableHTTPTool` discovers the catalog and builds callable functions. These are the relevant weather settings; the object is connected and retained host-side, not placed in the agent's initial tools:
-
-```python
-weather_tools = MCPStreamableHTTPTool(
-    name="weather",
-    url=weather_url,
-    session=weather_session,
-    tool_name_prefix="weather",
-    load_prompts=False,
-    use_progressive_disclosure=False,
-    approval_mode="never_require",
-)
-```
-
-Here `False` disables the MCP wrapper's model-facing per-tool loading helpers. It does **not** expose all tools to the model: the host retains the native functions until the corresponding skill loads. Dynamic exposure uses the public `FunctionInvocationContext.add_tools(...)` API instead.
-
-The configured providers' catalogs are the source of truth. There is no second tool-name list in the advisor. The demo trusts these providers and uses `never_require` for their read-only operations; adding write operations would require revisiting approval policy. Endpoint configuration and provider prefixes keep routing explicit. The other prefixes are `safety`, `skicoach`, and `lifttraffic`.
-
-### The model selects a skill; the host supplies its tool group
-
-There are two different kinds of discovery:
-
-1. Before the model runs, the host retrieves the configured providers' catalogs through paginated MCP `tools/list`, using app-owned connections and native tool objects.
-2. The model initially receives skill metadata and skill-loading helpers, not the twelve operation schemas. Existing advisor instructions and the researcher tool are also present.
-3. Native `load_skill` reads the chosen `SKILL.md`.
-4. After that read succeeds, the host's integration hook registers **all native functions from that skill's configured provider** for this run through `add_tools`.
-5. On the **next model iteration**, the advisor sees the instructions plus every tool description and parameter schema in the selected group. Loading weather exposes its three operations; the other providers remain hidden.
-6. The model chooses which operation to invoke, for example `weather_weather_forecast({"hours":6})`. MAF sends MCP `tools/call` using the original remote name, `weather_forecast`.
-
-The repeated `weather_` comes from adding the configured provider prefix to an already domain-prefixed remote name.
-
-Loading the group does not execute all its operations. It gives the model enough information to choose among them without first guessing from tool names. There is no separate model-issued per-tool loader call.
-
-This grouping follows the demo's one-skill-per-provider boundary. A provider containing several unrelated skills would need a more specific association. Skill content cannot redirect clients to another endpoint, and a failed skill load must not expose a tool group. Registration controls model context, not authorization.
-
-MAF supplies progressive registration, not the skill-to-provider binding: that small association is our host integration, not automatic behavior built into `SkillsProvider`. There is no custom operation dispatcher or Foundry Toolbox. The sample uses Foundry's `gpt41` deployment, but the mechanism lives in MAF's function-calling integration, not a Foundry-only tool-search feature.
-
-### The small amount of host glue
-
-Both skills-advisor hosting surfaces, Responses and A2A, use the same Python builder and keep a shared agent. MCP connections stay open for the application's lifetime. Python's `AsyncExitStack` is the cleanup manager that closes them on shutdown and cleans up failed connection setup.
-
-Connections and tool registrations have different lifetimes. Native catalog objects are reused without mutable per-tool-loader state. The integration adds their functions only to the current invocation, never to the shared agent's tool list.
-
-The hook lives in `skills_orchestrator_python/native_mcp.py`. At initialization, it binds skill identities from the configured sources' metadata to their native catalogs and rejects ambiguous names. MAF 1.17 returns skill content rather than a typed success envelope: after native invocation, the hook compares the normalized text result with that same cached skill's public `get_content()` result. A known name alone is not enough to register tools; failures, cancellations, and non-text approval results do not qualify.
-
-Those registrations last through the response stream and disappear when the run finishes, fails, or is cancelled. Followups load needed skills again; conversation history is retained separately. Nothing sends an unload command to the MCP server or closes its shared connection at the end of a request.
-
-Provider operations use native `approval_mode="never_require"` and the SDK's automatic function invocation. The two `SkillsProvider` settings above also make instruction reads automatic, without an approval/resumption boundary. The hook does not maintain approval state or custom resumption logic; this demo uses automatic execution for its trusted read-only providers.
-
-**The hook maps a successfully loaded skill to a provider catalog. MAF handles function registration, descriptions, schemas, dispatch, and execution.** This is deliberately a small integration, not a second tool framework.
-
-The shared builder keeps provider operations out of the agent's initial tools:
-
-```python
 agent = client.as_agent(
     name="skiadvisorskill",
     instructions=INSTRUCTIONS,
@@ -293,11 +276,19 @@ agent = client.as_agent(
 await skill_tools.initialize(agent, exit_stack)
 ```
 
-The observer's registration step is `context.add_tools(native.functions)`.
-The public SDK owns same-object deduplication and next-iteration visibility,
-including when several skills are selected in one model iteration.
+`context_providers=[skills]` supplies skill discovery and instruction loading. `middleware=[skill_tools]` places the adapter around function invocations so it can react to successful skill loads. The initial `tools` list contains only the researcher: the providers' operation schemas are not yet exposed to the model.
 
-For the small-catalog alternative, use the same native MCP objects but register them directly in the agent's `tools`. All advertised operation definitions are then available upfront, and the skill-to-provider hook can be omitted. With group loading, selecting a skill adds more schemas than selecting one operation, but avoids a separate model step devoted to loading tool names.
+At initialization, the adapter shares cached native skill sources with `SkillsProvider`, rejects ambiguous skill names, and discovers each provider's tools through paginated `tools/list`. Native `MCPStreamableHTTPTool` objects build and retain the callable functions host-side. They use `use_progressive_disclosure=False` to disable per-tool loader helpers: this sample exposes groups through `add_tools` instead.
+
+When the advisor calls `load_skill("weather")`, native MAF reads the instructions. The middleware confirms the returned text matches the cached skill content, then registers all three weather tools. **On the next model iteration**, the advisor sees their descriptions and parameter schemas and can choose an operation. Other providers remain hidden until their skills load. Loading a group does not execute its tools or require a separate per-tool loader call.
+
+For example, the advisor can call `weather_weather_forecast({"hours":6})`; MAF sends `tools/call` with the remote name `weather_forecast`. The repeated `weather_` is simply the host's provider prefix added to the MCP tool name. Skill loading is a host function backed by `resources/read`, not itself an MCP protocol method.
+
+The connections and registrations have different lifetimes. MCP connections stay open for the application, with `AsyncExitStack` managing shutdown and failed-setup cleanup. Added tools belong only to the current run, including its response stream, and disappear on completion, failure, or cancellation. Followups reload needed skills; conversation history is separate. Finishing a request neither closes the shared connection nor sends a remote unload command.
+
+The demo automatically invokes its trusted read-only tools using `approval_mode="never_require"`; the two `SkillsProvider` flags also make instruction reads automatic. That is a demo policy, not authorization granted by loading a skill.
+
+**The middleware binds a successfully loaded skill to a provider catalog. MAF handles function registration, deduplication, schemas, dispatch, and execution.**
 
 ## Following a real execution
 
@@ -348,11 +339,6 @@ The host registered all three weather tools and all four lift-traffic tools afte
 
 All six responses recommended Eagle Chair. They did not perform identical work: A2A called both `GetWaitTimes` and `SuggestLessBusyArea`, whereas the skills advisor called only `lift_traffic_least_busy_area`. Pair 3's A2A response also asked about skier ability after consulting the coach. Weather values and queue times changed between requests.
 
-**Trace limitation:** the exported advisor/model spans carried each request's injected trace ID, including the A2A specialists. Native MCP provider HTTP operations appeared under separate trace IDs. I correlated those by destination and overlapping timestamps, not by inventing parent-child links. Frontend/root spans were not present in the export, so these are observed call structures, not screenshots of a complete end-to-end tree.
-
-<!-- Optional screenshot: A2A pair 3, trace 6f8083fd86ac2ee454f9b9f7477ecb86, expanded to show weather, lift and coach. This is a local Aspire capture, not a publicly accessible trace. Remove authentication parameters and unrelated environment details. -->
-<!-- Optional screenshot: skill-scoped pair 3, host/model trace b6f726e3dd6262cc440f44cdbad85367, showing three model calls: skill loads, direct operations, answer. Show weather provider trace 1b458a45fea5eebaf38506b4ff504ffc and lift provider trace dad07300af041f4d462bb6f91da520e9 separately; destination/timestamp correlation is not a connected trace tree. -->
-
 ## What changed in latency and tokens?
 
 These measurements were captured on **September 10, 2026, 13:03-13:09 UTC**, against skill-scoped commit `56f453a`, using the `gpt41` deployment.
@@ -402,9 +388,11 @@ Trace IDs refer to the local Aspire capture, not public URLs.
 
 Start with one bounded domain. Preserve the existing services, expose typed tools, and compare routing, data correctness, and answer quality before changing traffic.
 
-Choose eager versus skill-scoped exposure according to the real catalog and workload. A skill should group related operations. Loading a whole provider saves a separate tool-selection step but supplies schemas that may not all be used; a smaller initial context is not automatically a faster or cheaper conversation.
+Choose eager versus skill-scoped exposure according to the real catalog and workload. With a small catalog, attach the native MCP tools directly to the agent and omit the registration middleware. You can still load instructions on demand.
 
-Keep access policy in the host and provider, separate from skill instructions. Use credentials intended for the configured endpoint and deliberate request-context propagation. Do not place changing users' credentials in a shared client's mutable defaults or in skill text.
+A skill should group related operations. This demo has one skill per provider; several unrelated skills on one server would need a more specific tool association. Loading a whole provider avoids a separate per-tool loading step but supplies schemas that may not all be used; a smaller initial context is not automatically a faster or cheaper conversation.
+
+Keep access policy in the host and provider, separate from skill instructions. Use credentials intended for the configured endpoint and deliberate request-context propagation. Do not place changing users' credentials in a shared client's mutable defaults or in skill text. Introducing write operations requires revisiting the demo's automatic-approval policy.
 
 Finally, keep autonomy where it earns its cost. A researcher, specialized model, or independent workflow can remain an agent. A bounded capability can instead supply instructions and tools while keeping its service and data remote.
 
@@ -415,6 +403,14 @@ The useful distinction is **delegating a task to another reasoner versus giving 
 In this demo, specialist hosting becomes MCP provider hosting. The Agent Card's descriptive identity becomes skill metadata, the system prompt becomes an enriched `SKILL.md`, and the tools remain tools.
 
 The weather service stays remote. Its reasoning moves into the advisor. A small host hook binds skill loading to the provider's catalog; native MAF supplies request-local registration and remote invocation.
+
+## Compatibility and limitations
+
+The architecture separates three contracts: the [Agent Skills document format](https://agentskills.io/specification), the MCP transport used to discover and retrieve those documents, and the host SDK's tool-registration API. Core MCP resources and tools do not, by themselves, define the skill-to-provider association used in this sample.
+
+**Skill transport, checked September 10, 2026:** the demo's `skill://index.json` discovery follows a pinned, historical [Draft revision of SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/b3f015a7929041dada4b0eaf5a657b30d4f5d6d1/seps/2640-skills-extension.md) and the installed `MCPSkillsSource`. The [September 3 revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/d6b31a03504c15677d49b922b6b6ace0ef65728d/seps/2640-skills-extension.md) says Accepted and specifies `skills/list` and `skills/get`, but its [PR was still open and unmerged](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) at that check. The demo does not implement those newer methods; its index is not a universal core MCP requirement.
+
+**Host integration:** this sample uses `agent-framework-core==1.17.0`, whose public `FunctionInvocationContext.add_tools` API is experimental. Its native `load_skill` returns text rather than a typed success envelope, which explains the middleware's content comparison. Pin and review the SDK and skill-transport versions when adapting the example; the small custom skill-to-provider binding is separate from both contracts.
 
 ---
 
@@ -436,10 +432,7 @@ The implementation is pinned to [commit `56f453a`](https://github.com/tommasodot
 | Native-loop and local MCP coverage | [`tests/`](https://github.com/tommasodotNET/ski-resort-demo/tree/56f453a2c52de91ac71ef19da83caec4976f5a17/src/ski-advisor-skill/tests) |
 | Aspire topology | [`src/apphost.cs`](https://github.com/tommasodotNET/ski-resort-demo/blob/56f453a2c52de91ac71ef19da83caec4976f5a17/src/apphost.cs) |
 
-The distinction between format, transport, and SDK behavior matters:
+Additional protocol and SDK references:
 
-- [Agent Skills format specification](https://agentskills.io/specification): `SKILL.md`, frontmatter, procedures, and supporting files.
 - [MCP resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) and [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools): the protocol primitives used here.
-- [Historical SEP-2640 Draft revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/b3f015a7929041dada4b0eaf5a657b30d4f5d6d1/seps/2640-skills-extension.md): the index-based transport profile implemented by this demo.
-- [SEP-2640 proposal](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) and [September 3 accepted-text revision](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/d6b31a03504c15677d49b922b6b6ace0ef65728d/seps/2640-skills-extension.md): evolving upstream status and a different discovery contract.
-- [MAF function-invocation registration API](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_middleware.py) and [native MCP implementation](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_mcp.py): the public APIs used with `agent-framework-core==1.17.0`; progressive `add_tools` is experimental.
+- [MAF function-invocation registration API](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_middleware.py) and [native MCP implementation](https://github.com/microsoft/agent-framework/blob/4507512f95effaae4518d658e86e9afc0ccb4514/python/packages/core/agent_framework/_mcp.py): the SDK APIs used by the host integration.
