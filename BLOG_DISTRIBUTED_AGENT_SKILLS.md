@@ -27,7 +27,9 @@ For a weather question, the flow looks like this:
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant O as Advisor model
+    box Advisor agent
+        participant O as Advisor model
+    end
     box Weather specialist agent
         participant A as Weather model
         participant T as Weather tool
