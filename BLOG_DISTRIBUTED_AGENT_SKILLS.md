@@ -28,8 +28,10 @@ For a weather question, the flow looks like this:
 sequenceDiagram
     participant U as User
     participant O as Advisor model
-    participant A as Weather agent model
-    participant T as Weather tool
+    box Weather specialist agent
+        participant A as Weather model
+        participant T as Weather tool
+    end
     participant D as Resort data
     U->>O: What is the weather like?
     O->>A: Answer this weather question
@@ -81,10 +83,10 @@ A distributed skill is not an agent wrapped in Markdown. It gives the advisor a 
 
 | Concern | Agent as a tool | Distributed skill |
 |---|---|---|
-| What the parent discovers | A remote agent and its capabilities | A competence it can load |
+| What the parent discovers | A specialist agent exposed as a tool | A competence it can load |
 | Where specialist instructions run | In the specialist's model context | In the parent's model context |
 | Who selects domain operations | The specialist model | The parent model |
-| What executes remotely | An agent loop and its tools | MCP tool handlers and domain services |
+| What executes remotely | A specialist agent loop and its tools | MCP tools and their backing services |
 | What remains distributed | Agents, services, data | Skill providers, services, data |
 
 This is not "MCP replaces A2A everywhere." A2A and MCP address different boundaries: an autonomous agent can remain an agent, while a bounded competence can become a skill.
@@ -345,14 +347,14 @@ Token totals sum each unique leaf **`chat gpt41`** span once, including every re
 
 | Pair | Architecture | Elapsed | Input tokens | Output tokens | Total tokens | Model calls | Cached input |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 1 | A2A specialists | 16.416 s | 2,971 | 578 | 3,549 | 6 | Partial* |
+| 1 | A2A specialists | 16.416 s | 2,971 | 578 | 3,549 | 6 | Partial<sup>*</sup> |
 | 1 | Native MCP skills | 8.661 s | 4,341 | 178 | 4,519 | 3 | 1,536 |
 | 2 | Native MCP skills | 5.866 s | 4,337 | 165 | 4,502 | 3 | 1,536 |
-| 2 | A2A specialists | 12.835 s | 2,974 | 580 | 3,554 | 6 | Partial* |
-| 3 | A2A specialists | 17.188 s | 3,394 | 637 | 4,031 | 7 | Partial* |
+| 2 | A2A specialists | 12.835 s | 2,974 | 580 | 3,554 | 6 | Partial<sup>*</sup> |
+| 3 | A2A specialists | 17.188 s | 3,394 | 637 | 4,031 | 7 | Partial<sup>*</sup> |
 | 3 | Native MCP skills | 4.517 s | 4,341 | 171 | 4,512 | 3 | 3,072 |
 
-*A2A advisor spans reported zero cached input; specialist spans omitted cache counters. Whole-system cached input is therefore unknown, not zero. Native cached tokens are already included in input totals.*
+<sup>*</sup> *A2A advisor spans reported zero cached input; specialist spans omitted cache counters. Whole-system cached input is therefore unknown, not zero. Native cached tokens are already included in input totals.*
 
 **The skills path was faster in these reused-process, cache-affected runs:** mean elapsed time was 6.348 seconds versus 15.480 seconds for A2A. This does not isolate an architectural speedup from cache effects, first-use credential initialization, language/runtime differences, or the amount of work performed.
 
