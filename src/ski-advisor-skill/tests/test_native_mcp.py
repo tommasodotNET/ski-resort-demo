@@ -140,17 +140,18 @@ async def ski_researcher_agent(query: str) -> str:
     return query
 
 
-async def make_agent(connections, steps, stack, *, auto_approve=True):
+async def make_agent(connections, steps, stack, *, auto_approve=True, history_provider=None):
     registration = SkillToolsMiddleware(connections)
     client = ScriptedClient(steps)
     middleware = [registration]
     agent = Agent(
         client, instructions=INSTRUCTIONS, tools=[ski_researcher_agent],
+        default_options={"allow_multiple_tool_calls": True},
         context_providers=[SkillsProvider(
             registration.source,
             disable_load_skill_approval=auto_approve,
             disable_read_skill_resource_approval=auto_approve,
-        )], middleware=middleware,
+        )] + ([history_provider] if history_provider is not None else []), middleware=middleware,
     )
     await registration.initialize(agent, stack)
     return agent, client
@@ -319,6 +320,68 @@ class NativeLoopTests(unittest.IsolatedAsyncioTestCase):
                              for m in response.messages for c in m.contents))
         self.assertEqual(len(self.weather.calls), 1)
         self.assertEqual(len(self.safety.calls), 1)
+
+    async def test_independent_skill_loads_and_tool_calls_overlap(self):
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                weather, safety = FakeMCP(), FakeMCP("safety", "safety", "safety_risk")
+                started = {"load": set(), "call": set()}
+                overlapped = {"load": set(), "call": set()}
+                ready = {"load": asyncio.Event(), "call": asyncio.Event()}
+
+                def transport(fixture):
+                    async def send(request, result_type, **kwargs):
+                        method = request.root.method
+                        phase = None
+                        if method == "resources/read" and str(request.root.params.uri).endswith("/SKILL.md"):
+                            phase = "load"
+                        elif method == "tools/call":
+                            phase = "call"
+                        if phase is not None:
+                            started[phase].add(fixture.skill)
+                            if len(started[phase]) == 2:
+                                ready[phase].set()
+                            # Neither request may finish until its peer has started.
+                            await asyncio.wait_for(ready[phase].wait(), timeout=5)
+                            overlapped[phase].add(fixture.skill)
+                        return await fixture.send(request, result_type, **kwargs)
+                    return send
+
+                for fixture in (weather, safety):
+                    fixture.session.send_request.side_effect = transport(fixture)
+
+                def loaded(messages, options):
+                    self.assertTrue(options["allow_multiple_tool_calls"])
+                    self.assert_catalog(options, weather)
+                    self.assert_catalog(options, safety)
+                    return Message("assistant", [
+                        Content.from_function_call("call-w", "weather_weather_forecast", arguments={"hours": 2}),
+                        Content.from_function_call("call-s", "safety_safety_risk", arguments={"hours": 2}),
+                    ])
+
+                agent, client = await make_agent([weather.connection, safety.connection], [
+                    Message("assistant", [
+                        Content.from_function_call("load-w", "load_skill", arguments={"skill_name": "weather"}),
+                        Content.from_function_call("load-s", "load_skill", arguments={"skill_name": "safety"}),
+                    ]),
+                    loaded, Message("assistant", ["both done"]),
+                ], self.stack)
+                response = agent.run("both", session=agent.create_session(), stream=stream)
+                if stream:
+                    async for _ in response:
+                        pass
+                    result = await response.get_final_response()
+                else:
+                    result = await response
+                self.assertEqual(result.text, "both done")
+                self.assertEqual(overlapped, {"load": {"weather", "safety"}, "call": {"weather", "safety"}})
+                self.assertEqual(weather.calls, [("weather_forecast", {"hours": 2})])
+                self.assertEqual(safety.calls, [("safety_risk", {"hours": 2})])
+                results = {
+                    content.call_id for message in client.requests[-1][0]
+                    for content in message.contents if content.type == "function_result"
+                }
+                self.assertTrue({"call-w", "call-s"} <= results)
 
     async def test_new_advertised_operation_included_without_configuration_change(self):
         self.weather.pages[None].tools.append(Tool(
@@ -543,7 +606,7 @@ class SharedBuilderTests(unittest.IsolatedAsyncioTestCase):
             patch.dict(os.environ, {builder.SKI_RESEARCHER_AGENT_NAME_ENV: "researcher",
                                     builder.SKI_RESEARCHER_PROJECT_ENDPOINT_ENV: "https://configured.example"}),
             patch.object(builder, "_discover_providers", AsyncMock(return_value=([fixture.connection], ["weather"], []))),
-            patch.object(builder, "_build_history_provider", AsyncMock(return_value=(history, "cosmos"))),
+            patch.object(builder, "_build_history_provider", AsyncMock(return_value=(history, "cosmos"))) as history_mock,
             patch.object(builder, "get_foundry_config", return_value=("endpoint", "model")),
             patch.object(builder, "AsyncDefaultAzureCredential", return_value=object()),
             patch.object(builder, "DefaultAzureCredential", return_value=object()),
@@ -552,10 +615,16 @@ class SharedBuilderTests(unittest.IsolatedAsyncioTestCase):
             patch.object(builder, "FoundryChatClient", return_value=Client()),
         ):
             built = await builder.build_orchestrator_agent(exit_stack=Stack(), enter_agent_context=False)
+            with_history = captured.copy()
+            history_mock.return_value = (None, "none")
+            without_history = await builder.build_orchestrator_agent(exit_stack=Stack(), enter_agent_context=True)
+        self.assertEqual(captured["default_options"], {"allow_multiple_tool_calls": True})
+        self.assertEqual(without_history.history_backend, "none")
+        captured = with_history
         self.assertEqual(captured["tools"], [research_tool])
         self.assertIs(type(captured["context_providers"][0]), SkillsProvider)
         self.assertIs(captured["context_providers"][-1], history)
-        self.assertEqual(captured["default_options"], {"store": False})
+        self.assertEqual(captured["default_options"], {"allow_multiple_tool_calls": True, "store": False})
         self.assertEqual(built.history_backend, "cosmos")
         self.assertEqual(len(captured["middleware"]), 1)
         self.assertIsInstance(captured["middleware"][0], SkillToolsMiddleware)

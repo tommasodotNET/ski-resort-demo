@@ -66,6 +66,16 @@ which to execute. Registration itself does not execute any operation.
 There is no custom operation dispatcher, Foundry Toolbox, semantic search
 service, or second specialist model call.
 
+### Parallel execution
+
+The shared builder sets `allow_multiple_tool_calls=True` (translated to
+`parallel_tool_calls` in the Foundry model request) for both hosting surfaces,
+with or without Cosmos history. The instructions ask the model to batch
+independent skill loads and independent operations in one response; MAF's native
+function loop executes those calls concurrently. No custom dispatcher is needed.
+Skill loading still precedes use of its newly registered tools, and calls that
+need earlier results remain sequential. The model decides which calls to batch.
+
 ### What is disclosed, and when
 
 The SDK retrieves MCP tool catalogs **host-side** using paginated `tools/list`
@@ -207,6 +217,12 @@ not another runtime mode implemented by this repository.
 | `HOST` | `0.0.0.0` | Responses host binding |
 | `A2A_AGENT_BASE_URL` | Local A2A URL | Base URL advertised in the A2A Agent Card |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Unset | Enables telemetry export |
+| `FOUNDRY_AGENT_NAME` | `OTEL_SERVICE_NAME`, then `skiadvisorskill` | Responses host identity and telemetry service name; preserves the deployed Foundry name |
+
+The Responses host uses Aspire's `OTEL_SERVICE_NAME` when no Foundry agent name
+is supplied, so its traces appear under `skiadvisorskill` rather than the SDK's
+generic `azure.ai.agentserver` service. The A2A adapter keeps its separate
+`skiadvisorskilla2a` service identity.
 
 Provider endpoints are resolved in order:
 
@@ -222,10 +238,30 @@ and reported as skipped.
 
 ## Conversation history
 
+History preserves user preferences and conversational context, not a cache of current
+resort conditions. The shared instructions require fresh operational tool calls on every
+conditions/recommendation turn, including repeated questions and short follow-ups.
+Loading skill instructions alone is not a data refresh. If a live source fails, the
+advisor must state that the current data could not be verified rather than reuse old
+readings or recommendations. This policy applies to both Responses and A2A hosts.
+
 When Cosmos is configured, the shared builder attaches
-`agent_framework.azure.CosmosHistoryProvider` and sets `store=False` on the
+`ConversationCosmosHistoryProvider`, a native `CosmosHistoryProvider` subclass,
+and sets `store=False` on the
 chat client to avoid competing server-managed history. The provider uses
 the A2A context/conversation ID as its session ID.
+
+Cosmos retains the complete transcript, including tool calls and results, for
+debugging. At the start of each turn, the provider replays only user and assistant
+messages, removing historical function-call/result contents and tool messages.
+Text alongside a tool call is retained; empty messages are omitted. Current-turn
+tool results remain available to the native execution loop, including parallel
+calls and progressive skill loading. This also applies to previously saved
+conversations without deleting or migrating their stored history.
+
+This reduces stale-data exposure, but is not a runtime freshness guarantee:
+earlier assistant replies can still contain old readings. The fresh-tool
+instructions above remain necessary.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -240,11 +276,26 @@ the native history provider. The voice and .NET components' existing
 `conversations` and `sessions` containers use `/conversationId` and are not
 interchangeable with it.
 
-Aspire gives the A2A adapter a `skillHistory` reference. Without Cosmos, its
-history is not durable across process restarts. The Responses host instead
-uses `history_source="agent_server"` when Cosmos is absent, allowing the
-Foundry Agent Server session store to own history when deployed. Standalone
-local hosting does not itself provide that managed session store.
+Aspire gives both the Responses host and the A2A adapter a `skillHistory`
+reference. Both load and save messages through the native Cosmos history
+provider. The Responses host selects `history_source="agent"` so the Foundry
+response transcript is not replayed a second time.
+
+For skills chat, the frontend creates a conversation ID on the first request
+and sends it as `conversation` on every follow-up. A new conversation gets a
+new ID; when Foundry returns a server-assigned ID, the frontend adopts it.
+When the hosted endpoint returns no conversation ID, the frontend uses the
+returned `agent_session_id` plus the last completed `previous_response_id`
+instead; the publish gateway drops the initial local UUID, which Foundry does
+not accept as a conversation identifier.
+The Responses SDK persists the mapping from this ID to the agent's
+session (in its local state store during development, or Foundry storage when
+hosted); Cosmos stores the messages under that agent session ID. A2A continues
+to use its context ID directly as the agent session ID.
+
+Without Cosmos, A2A history is not durable across process restarts. The
+Responses host falls back to `history_source="agent_server"` and the SDK's
+response store. The Cosmos path is the default for both hosts under Aspire.
 
 ## Running
 
@@ -292,10 +343,10 @@ uv run python -m unittest discover -s tests -v
 For real local .NET MCP integration, build the providers first:
 
 ```bash
-dotnet build src/weather-skills/WeatherSkill.Dotnet.csproj
-dotnet build src/safety-skills/SafetySkill.Dotnet.csproj
-dotnet build src/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
-dotnet build src/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
+dotnet build src/skills/weather-skills/WeatherSkill.Dotnet.csproj
+dotnet build src/skills/safety-skills/SafetySkill.Dotnet.csproj
+dotnet build src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
+dotnet build src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
 cd src/ski-advisor-skill
 RUN_LIVE_MCP_TESTS=1 uv run python -m unittest discover -s tests -p test_live_mcp.py -v
 ```

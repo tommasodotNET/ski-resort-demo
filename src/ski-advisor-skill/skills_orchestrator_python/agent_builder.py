@@ -48,15 +48,28 @@ from .config import (
     resolve_skill_provider_url,
 )
 from .native_mcp import SkillToolsMiddleware, SkillConnection
+from .history import ConversationCosmosHistoryProvider
 
 logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """You are the AlpineAI Skills Orchestrator, the main ski resort advisor.
 Use `ski_researcher_agent` for general skiing questions that need web-backed research.
 Never invent operational resort data. Answer concisely and concretely, and prioritize safety.
+Resort data changes continuously: weather, forecasts, lift queues/status, slope availability,
+and safety conditions from earlier turns are stale, including previous tool results.
+On EVERY turn about resort conditions or operational recommendations, invoke the relevant
+live tools again before answering, even for repeated questions or short followups.
+Use history to remember the user's preferences and conversational intent, never as a
+substitute for fresh operational data. Refresh every data source needed for the answer.
+Loading a skill only retrieves instructions; it does not count as refreshing live data.
+If a live tool fails or is unavailable, say what could not be verified; never fall back
+to historical readings or an earlier recommendation as though they were current.
 Load the relevant skill's canonical instructions with load_skill. After a successful
 load, all operations from that provider are registered for the next model iteration.
 Choose and directly call operations according to their descriptions and parameter schemas.
+Batch independent skill loads and independent tool calls in the same model iteration
+so they execute in parallel. Wait for skill loading before calling its newly exposed tools,
+and sequence calls when one needs another's result.
 Resource reads are for skill documentation only, never operational data.
 Each new turn starts with skill metadata and load helpers only; reload needed skills on followups.
 Loading is progressive disclosure, not authorization."""
@@ -174,7 +187,7 @@ async def _build_history_provider(exit_stack: AsyncExitStack) -> tuple[CosmosHis
         # from it.
         credential = await exit_stack.enter_async_context(AsyncDefaultAzureCredential())
 
-    history_provider = CosmosHistoryProvider(
+    history_provider = ConversationCosmosHistoryProvider(
         COSMOS_HISTORY_SOURCE_ID,
         endpoint=cosmos_config.endpoint,
         database_name=cosmos_config.database_name,
@@ -249,7 +262,7 @@ async def build_orchestrator_agent(
         logger.warning("No skill providers connected; agent will run with no discoverable skills.")
 
     history_provider, history_backend = await _build_history_provider(exit_stack)
-    default_options: dict[str, Any] = {}
+    default_options: dict[str, Any] = {"allow_multiple_tool_calls": True}
     if history_provider is not None:
         context_providers.append(history_provider)
         # Disable the chat client's own server-managed thread/store: CosmosHistoryProvider
@@ -304,7 +317,7 @@ async def build_orchestrator_agent(
         tools=[researcher_tool],
         context_providers=context_providers,
         middleware=middleware,
-        default_options=default_options or None,
+        default_options=default_options,
     )
 
     if skill_tools is not None:

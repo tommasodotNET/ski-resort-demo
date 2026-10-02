@@ -6,11 +6,12 @@ using Azure.Identity;
 using A2A;
 using A2A.AspNetCore;
 using LiftTrafficAgent.Dotnet.Services;
-using LiftTrafficAgent.Dotnet.Skills;
 using LiftTrafficAgent.Dotnet.Tools;
 using Microsoft.Agents.AI.OpenAI;
 
 const string A2AAgentBaseUrlEnvironmentVariable = "A2A_AGENT_BASE_URL";
+const string AgentName = "lifttrafficagenta2a";
+const string AgentDescription = "Lift congestion and traffic intelligence agent";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,15 +34,17 @@ builder.Services.AddSingleton<LiftDataService>();
 builder.Services.AddSingleton<LiftTrafficTools>();
 
 // Register the agent
-var liftAgentBuilder = builder.AddAIAgent("lifttrafficagenta2a", (sp, key) =>
+var liftAgentBuilder = builder.AddAIAgent(AgentName, (sp, key) =>
 {
     var chatClient = sp.GetRequiredService<IChatClient>();
     var tools = sp.GetRequiredService<LiftTrafficTools>().GetFunctions();
 
     var agent = chatClient.AsAIAgent(
-        instructions: LiftTrafficSkillCatalog.Instructions,
+        instructions:
+            "You are the Lift Traffic Agent for AlpineAI ski resort. You provide real-time lift status, wait times, " +
+            "and congestion analysis. Help skiers find the least crowded areas and plan efficient lift usage.",
         name: key,
-        description: LiftTrafficSkillCatalog.Description,
+        description: AgentDescription,
         tools: tools.ToArray()
     );
 
@@ -70,8 +73,8 @@ var agentBaseUrl = Environment.GetEnvironmentVariable(A2AAgentBaseUrlEnvironment
 var agentUrl = $"{agentBaseUrl.TrimEnd('/')}/agenta2a";
 var hostA2AAgentCard = new AgentCard
 {
-    Name = LiftTrafficSkillCatalog.AgentName,
-    Description = LiftTrafficSkillCatalog.Description,
+    Name = AgentName,
+    Description = AgentDescription,
     Version = "1.0.0",
     SupportedInterfaces = [
         new AgentInterface

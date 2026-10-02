@@ -9,7 +9,7 @@ You are an expert in Microsoft Agent Framework (MAF), .NET 10, Aspire, A2A, and 
 
 Before coding, choose one primary exposure pattern.
 
-- **A2A specialist agent**: use for weather/lift/safety/coach-style specialists that other agents call as tools. Reference: `src/lift-traffic-agent-a2a/Program.cs`.
+- **A2A specialist agent**: use for weather/lift/safety/coach-style specialists that other agents call as tools. Reference: `src/a2a/lift-traffic-agent-a2a/Program.cs`.
 - **Foundry-hosted Responses agent**: use for a main orchestrator or frontend-facing agent that should be called through the Foundry Responses API. Reference: `src/ski-advisor-a2a/Program.cs`.
 - **Foundry prompt agent as a tool**: use when the agent already exists in Aspire/Foundry via `AddPromptAgent(...)` and this .NET agent should call it as a tool. Reference: `ski_researcher_agent` wiring in `ski-advisor-a2a` and `voice-advisor-agent`.
 
@@ -31,10 +31,14 @@ Typical packages for an A2A .NET specialist:
 
 Add shared project references when needed:
 
+For projects directly under `src/` (advisors and voice bridges):
+
 ```xml
 <ProjectReference Include="..\service-defaults\service-defaults.csproj" />
 <ProjectReference Include="..\shared-services\SharedServices.csproj" />
 ```
+
+Projects under `src/a2a/` or `src/skills/` need an additional `..\` in those paths.
 
 For Foundry-hosted Responses agents or prompt-agent tools, also use the packages already present in `ski-advisor-a2a` or `voice-advisor-agent`:
 
