@@ -65,8 +65,12 @@ services. The Python orchestrator composes native `SkillsProvider` /
 `MCPSkillsSource` with native `MCPStreamableHTTPTool` functions and
 `FunctionInvocationContext.add_tools`. After a successful skill load, a small
 host hook exposes that provider's entire catalog for the current run. The Foundry
-researcher remains a separate agent tool. `CosmosHistoryProvider` uses a
-dedicated `/session_id`-partitioned `skillhistory` container for the A2A host.
+researcher remains a separate agent tool. `ConversationCosmosHistoryProvider`
+extends the native `CosmosHistoryProvider` and uses a dedicated
+`/session_id`-partitioned `skillhistory` container for both the Responses and A2A
+hosts. Complete transcripts are stored, but only user and assistant messages
+without historical tool calls/results are replayed. Current-turn tool results
+remain available to the native loop.
 
 The index-based skill profile is a historical Draft revision, not the newest
 SEP contract. As of September 10, 2026, the newer text is marked Accepted but
@@ -546,25 +550,37 @@ User:
 
 ---
 
-# 16. Folder Structure (Suggested)
+# 16. Folder Structure
 
 ```
-/alpine-ai
+/src
+  apphost.cs
+  aspire.config.json
   /ski-advisor-a2a
   /ski-advisor-skill
   /voice-advisor-agent
-  /lift-traffic-agent-a2a
-  /weather-agent-a2a
-  /safety-agent-a2a
-  /ski-coach-agent-a2a
-  /weather-skills
-  /safety-skills
-  /ski-coach-skills
-  /lift-traffic-skills
+  /a2a
+    /lift-traffic-agent-a2a
+    /weather-agent-a2a
+    /safety-agent-a2a
+    /ski-coach-agent-a2a
+  /skills
+    /weather-skills
+    /safety-skills
+    /ski-coach-skills
+    /lift-traffic-skills
   /data-generator
   /frontend
-  /infrastructure
+  /responses-gateway
+  /shared-services
+  /service-defaults
 ```
+
+The AppHost defines the active service graph, including the publish-only
+Responses gateway. The ski researcher is a Foundry prompt agent declared there.
+Both skills-advisor hosts share parallel tool-call configuration: independent
+skill loads and operations run concurrently in MAF's native function loop, while
+dependent calls wait for the required instructions or results.
 
 ---
 

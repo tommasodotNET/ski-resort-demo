@@ -176,7 +176,7 @@ var deployment = project.AddModelDeployment(
 
 var weatherAgent = builder.AddUvicornApp(
     "weatheragenta2a",
-    "./weather-agent-a2a",
+    "./a2a/weather-agent-a2a",
     "weather_agent_python.main:app");
               </code></pre>
             </div>
@@ -194,7 +194,7 @@ var weatherAgent = builder.AddUvicornApp(
               <pre><code class="language-csharp" data-trim>
 var weatherAgent = builder.AddUvicornApp(
     "weatheragenta2a",
-    "./weather-agent-a2a",
+    "./a2a/weather-agent-a2a",
     "weather_agent_python.main:app");
 
 var liftAgent = builder.AddProject&lt;Projects.LiftTrafficAgent_Dotnet&gt;(
@@ -246,7 +246,7 @@ var skiResearcher = project
             <pre class="wide-code"><code class="language-csharp" data-trim>
 var weatherAgent = builder.AddUvicornApp(
     "weatheragenta2a",
-    "./weather-agent-a2a",
+    "./a2a/weather-agent-a2a",
     "weather_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
@@ -291,7 +291,7 @@ var aca = builder.AddAzureContainerAppEnvironment("aca");
 
 var weatherAgent = builder.AddUvicornApp(
     "weatheragenta2a",
-    "./weather-agent-a2a",
+    "./a2a/weather-agent-a2a",
     "weather_agent_python.main:app")
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)

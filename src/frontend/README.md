@@ -1,5 +1,17 @@
 # React + TypeScript + Vite
 
+## Conversation client tests
+
+Run `npm test` with Node.js 22.18+ (or Node.js 24+) for the Responses client tests.
+They cover skills-chat conversation identity, follow-ups, new-conversation
+isolation, existing voice IDs, and HTTP/streamed persistence errors. Skills chat
+sends a stable `conversation` ID locally so the Cosmos-backed advisor can restore
+history. When Foundry returns no conversation ID, skills chat instead retains
+the completed response's `agent_session_id` and sends it with
+`previous_response_id` on follow-ups. Only successful turns advance this
+continuation; starting a new conversation clears it. The .NET A2A advisor
+continues to supply its own ID.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

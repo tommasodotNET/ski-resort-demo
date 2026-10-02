@@ -29,7 +29,7 @@ from skills_orchestrator_python.native_mcp import SkillConnection
 from test_native_mcp import call, make_agent
 
 
-SRC = Path(__file__).resolve().parents[2]
+SKILLS = Path(__file__).resolve().parents[2] / "skills"
 PROVIDERS = (
     ("weather", "weather-skills", "WeatherSkill.Dotnet"),
     ("safety", "safety-skills", "SafetySkill.Dotnet"),
@@ -106,7 +106,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(stop_data)
         self.endpoints = {}
         for skill, folder, assembly in PROVIDERS:
-            dll = SRC / folder / "bin" / "Debug" / "net10.0" / f"{assembly}.dll"
+            dll = SKILLS / folder / "bin" / "Debug" / "net10.0" / f"{assembly}.dll"
             self.assertTrue(dll.is_file(), f"Build {folder} before running live tests")
             log_path = Path(self.temp.name) / f"{skill}.log"
             log = self.enterContext(log_path.open("w+"))
@@ -120,7 +120,7 @@ class LiveNativeMcpTests(unittest.IsolatedAsyncioTestCase):
             })
             process = subprocess.Popen(
                 ["dotnet", str(dll), "--urls", "http://127.0.0.1:0"],
-                cwd=SRC / folder, env=env, stdout=log, stderr=subprocess.STDOUT,
+                cwd=SKILLS / folder, env=env, stdout=log, stderr=subprocess.STDOUT,
             )
 
             def stop_process(process=process):

@@ -15,7 +15,7 @@ from that evolving profile. See the [profile details](src/ski-advisor-skill/READ
 | Component | Language | Role |
 |---|---|---|
 | **`skiadvisora2a`** | .NET | Existing Foundry-hosted orchestrator using specialists as A2A tools |
-| **`skiadvisorskill`** | Python | Native MAF skills and MCP tools advisor; its A2A hosting surface uses Cosmos-backed history |
+| **`skiadvisorskill`** | Python | Native MAF skills and MCP tools advisor; both Responses and A2A hosts use Cosmos-backed history |
 | **`voiceadvisora2a`** | .NET | Voice Live bridge exposing the four specialist A2A agents plus the ski researcher |
 | **`voiceadvisorskill`** | .NET | Voice Live bridge exposing only the `skiadvisorskilla2a` orchestrator |
 | **Compact A2A resources** | Python/.NET | `weatheragenta2a`, `safetyagenta2a`, `skicoachagenta2a`, and `lifttrafficagenta2a` |
@@ -84,25 +84,78 @@ Open the **Aspire dashboard** (URL shown in terminal output) to see all services
 
 The **frontend** will be available at the URL assigned by Aspire (shown in the dashboard).
 
+### Deploy to Azure
+
+The AppHost deploys supporting services to Azure Container Apps and the two
+Responses advisors to Foundry hosted agents:
+
+```bash
+Azure__SubscriptionId="$AZURE_SUBSCRIPTION_ID" \
+Azure__Location="$AZURE_LOCATION" \
+Azure__ResourceGroup="$AZURE_RESOURCE_GROUP" \
+aspire deploy --apphost src/apphost.cs --non-interactive
+```
+
+For this non-production demo, Cosmos DB allows public network access so the
+Foundry-hosted skills advisor can reach it without a private endpoint. The AppHost
+applies the approved `SecurityControl=Ignore` tag to the Cosmos account to exempt
+it from time-based resource policies. Authentication remains Microsoft Entra ID;
+account-key authentication is disabled. Production deployments need their own
+approved network and policy configuration.
+
+With the pinned Foundry hosting preview, Aspire's Cosmos role assignment targets
+the generated app identity, **not the Foundry hosted agent's runtime identity**.
+After the first deployment, get `instance_identity.principal_id` from the
+`skiadvisorskill-ha` Foundry agent and grant it the native Cosmos data role:
+
+```bash
+az cosmosdb sql role assignment create \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --account-name "$COSMOS_ACCOUNT_NAME" \
+  --principal-id "$FOUNDRY_SKILLS_AGENT_PRINCIPAL_ID" \
+  --role-definition-id 00000000-0000-0000-0000-000000000002 \
+  --scope /
+```
+
+This is the Cosmos DB Built-in Data Contributor role at account scope, matching
+Aspire's generated application roles. The native client needs account metadata
+during cold startup; a container-only grant was insufficient in hosted testing.
+The assignment persists across agent version deployments; repeat it if the Foundry
+agent identity is recreated. Missing this binding produces a Cosmos 403 for
+`Microsoft.DocumentDB/databaseAccounts/readMetadata`, even when networking works.
+
 ## Project Structure
 
 ```
 src/
 ├── apphost.cs                      # Aspire orchestration (all services wired here)
 ├── apphost.settings.Development.json  # Azure configuration
-├── ski-advisor-a2a/              # skiadvisora2a orchestrator
-├── ski-advisor-skill/            # skiadvisorskill + skiadvisorskilla2a surfaces
+├── ski-advisor-a2a/                # skiadvisora2a orchestrator
+├── ski-advisor-skill/              # skiadvisorskill + skiadvisorskilla2a surfaces
 ├── voice-advisor-agent/            # Shared .NET project for both Voice Live resources
-├── lift-traffic-agent-a2a/       # .NET lift traffic A2A agent
-├── {weather,safety,ski-coach,lift-traffic}-skills/ # .NET MCP providers
-├── weather-agent-a2a/            # Python weather A2A agent
-├── safety-agent-a2a/             # Python safety A2A agent
-├── ski-coach-agent-a2a/          # Python ski coach A2A agent
+├── a2a/                            # Specialist agents exposed over A2A
+│   ├── lift-traffic-agent-a2a/     # .NET
+│   ├── weather-agent-a2a/          # Python
+│   ├── safety-agent-a2a/           # Python
+│   └── ski-coach-agent-a2a/        # Python
+├── skills/                         # .NET MCP skill providers
+│   ├── weather-skills/
+│   ├── safety-skills/
+│   ├── ski-coach-skills/
+│   └── lift-traffic-skills/
 ├── data-generator/                 # Go data generator
 ├── frontend/                       # Vite + React + Tailwind dashboard
+├── responses-gateway/              # Frontend gateway used when publishing
 ├── shared-services/                # .NET shared library (Cosmos, thread store)
-└── service-defaults/               # Aspire service defaults
+└── service-defaults/                # Aspire service defaults
 ```
+
+`src/apphost.cs` is the source of truth for active services, including publish-only
+resources. Shared libraries remain alongside the advisors; the ski researcher is
+a Foundry prompt agent declared in the AppHost, not a separate local MCP project.
+The lift-traffic A2A project contains only its agent and local function tools;
+MCP resources and tool hosting live in `src/skills/lift-traffic-skills/`.
+The A2A Agent Card's `Skills` metadata is part of A2A discovery, not MCP hosting.
 
 ## Configuration
 
@@ -120,6 +173,14 @@ Both Responses and A2A hosting surfaces use the same builder. The frontend's
 separate A2A-specialist architecture selection remains unchanged. See the
 [skills advisor README](src/ski-advisor-skill/README.md#native-progressive-disclosure)
 for tool loading, approval, lifetime, and local testing.
+
+The shared builder enables multiple tool calls per model response. Independent
+skill loads and tool calls execute concurrently through MAF's native invocation
+loop; tools that depend on loaded instructions or earlier results run afterward.
+
+Both skills-advisor hosts use the existing Cosmos DB `skillhistory` container.
+The frontend sends a stable conversation ID for skills-chat follow-ups, allowing
+the Responses host to resume the same agent session and reload earlier turns.
 
 This small demo illustrates a larger-tool-catalog pattern. For genuinely small
 catalogs, load the configured providers' MCP tools upfront with the standard SDK instead.

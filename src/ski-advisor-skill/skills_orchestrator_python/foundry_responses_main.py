@@ -69,6 +69,12 @@ logger = logging.getLogger(__name__)
 
 
 async def _run() -> None:
+    # Agent Server derives service.name from FOUNDRY_AGENT_NAME, not OTEL_SERVICE_NAME.
+    if not os.environ.get("FOUNDRY_AGENT_NAME"):
+        os.environ["FOUNDRY_AGENT_NAME"] = (
+            os.environ.get("OTEL_SERVICE_NAME") or "skiadvisorskill"
+        )
+
     async with AsyncExitStack() as exit_stack:
         # `enter_agent_context=False`: ResponsesHostServer owns the agent's own
         # async context itself (entered lazily, on the first request -- see the
