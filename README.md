@@ -356,12 +356,5 @@ are not a controlled architectural speedup, quality study, or billable-cost rati
 - [Native MAF migration article](BLOG_DISTRIBUTED_AGENT_SKILLS.md): implementation
   walkthrough and paired measurements using
   `considering weather and waiting time, where should i start?`.
-- [Techorama presentation](slides/public/techorama/agents/index.html): "Use agents
-  to build agents" by Maddy Montaquila and Tommaso Stocchi, imported from
-  [maddymontaquila/techoramanl-2026](https://github.com/maddymontaquila/techoramanl-2026/tree/baa565ccb0ccbf1fc0c116cd27ca9a935c95f3f8/agents).
-  Open **Slides** on the Aspire dashboard's `slides` resource to present this deck.
-  Reveal.js, fonts, images, and speaker notes are bundled locally for offline use;
-  press `S` for speaker view, `F` for full screen, or `Esc` for the overview.
-- [Original presentation](slides/index.html): the previous English Reveal.js deck
-  remains available at the `slides` resource's root URL (`/`).
-  Run `npm run build` from `slides/` to generate the Vite build containing both decks.
+- [Presentation source](slides/index.html): English Reveal.js deck. Aspire serves
+  it as `slides`; run `npm run build` from `slides/` to generate the Vite build.
