@@ -1,0 +1,32 @@
+/* Shared styles for the Techorama 2026 decks (Aspire design system, dark) */
+html, body { background: #0f0d1d; }
+.reveal { font-family: 'Poppins', Arial, sans-serif; color: #f6f3ff; }
+.reveal .slides { text-align: left; }
+.reveal .slides > section { padding: 0; width: 1920px; height: 1080px; }
+.reveal .slide {
+  position: relative; width: 1920px; height: 1080px; overflow: hidden;
+  box-sizing: border-box; display: flex; flex-direction: column;
+  font-family: 'Poppins', Arial, sans-serif; color: #f6f3ff;
+  font-size: 32px; line-height: 1.4; text-align: left;
+}
+.reveal .slide *, .reveal .slide *::before, .reveal .slide *::after { box-sizing: border-box; }
+.reveal .slide h1, .reveal .slide h2, .reveal .slide h3, .reveal .slide p,
+.reveal .slide ul, .reveal .slide ol, .reveal .slide table {
+  margin: 0; color: inherit; font-family: inherit; text-transform: none; text-shadow: none; word-wrap: normal;
+}
+.reveal .slide h1 { font-size: 96px; font-weight: 600; line-height: 1.1; }
+.reveal .slide h2 { font-size: 64px; font-weight: 600; line-height: 1.15; }
+.reveal .slide h3 { font-size: 44px; font-weight: 600; line-height: 1.2; }
+.reveal .slide p { line-height: 1.4; }
+.reveal .slide ul { padding-left: 1.1em; list-style: disc; }
+.reveal .slide ul li::marker { color: #c3adff; }
+.reveal .slide a { color: inherit; text-decoration: none; }
+.reveal .slide img { margin: 0; max-width: none; max-height: none; border: 0; box-shadow: none; display: block; }
+.reveal .slide .ring { pointer-events: none; }
+.reveal .slide table { border-collapse: collapse; width: 100%; }
+.reveal .slide th, .reveal .slide td {
+  padding: 0.35em 0.6em; text-align: left; border-bottom: 1px solid rgba(195,173,255,0.22);
+  font-weight: inherit;
+}
+.reveal .slide th { font-weight: 600; }
+.reveal .progress { color: #7455dd; height: 4px; }

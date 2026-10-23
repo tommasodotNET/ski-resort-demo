@@ -259,7 +259,7 @@ if (builder.ExecutionContext.IsRunMode)
         .WithUrls((e) =>
         {
             e.Urls.Clear();
-            e.Urls.Add(new() { Url = "/", DisplayText = "Slides", Endpoint = e.GetEndpoint("http") });
+            e.Urls.Add(new() { Url = "/techorama/agents/index.html", DisplayText = "Slides", Endpoint = e.GetEndpoint("http") });
         });
 }
 
