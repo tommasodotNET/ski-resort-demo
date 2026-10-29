@@ -1,9 +1,9 @@
-#:sdk Aspire.AppHost.Sdk@13.5.3
-#:package Aspire.Hosting.Azure.AppContainers@13.5.3
-#:package Aspire.Hosting.Foundry@13.5.3-preview.1.26425.3
-#:package Aspire.Hosting.Azure.CosmosDB@13.5.3
-#:package Aspire.Hosting.Python@13.5.3
-#:package Aspire.Hosting.JavaScript@13.5.3
+#:sdk Aspire.AppHost.Sdk@13.6.4
+#:package Aspire.Hosting.Azure.AppContainers@13.6.4
+#:package Aspire.Hosting.Foundry@13.6.4-preview.1.26523.11
+#:package Aspire.Hosting.Azure.CosmosDB@13.6.4
+#:package Aspire.Hosting.Python@13.6.4
+#:package Aspire.Hosting.JavaScript@13.6.4
 #:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
 
 #:project ./ski-advisor-a2a/AdvisorAgent.Dotnet.csproj
@@ -47,7 +47,7 @@ var cosmos = builder.AddAzureCosmosDB("cosmosdb")
         account.Tags["SecurityControl"] = "Ignore";
         account.PublicNetworkAccess = CosmosDBPublicNetworkAccess.Enabled;
     })
-    .RunAsPreviewEmulator(
+    .RunAsEmulator(
         emulator =>
         {
             emulator.WithDataExplorer();
@@ -176,7 +176,6 @@ var skillsAdvisor = builder.AddPythonExecutable(
     .WithReference(liftSkill).WaitFor(liftSkill)
     .WithReference(skiResearcher).WaitFor(skiResearcher)
     .WithReference(skillHistory).WaitFor(skillHistory)
-    .WithComputeEnvironment(aca)
     .WithHttpEndpoint(targetPort: 8089)
     .AsHostedAgent(project, HostedAgentProtocol.Responses, "2.0.0");
 

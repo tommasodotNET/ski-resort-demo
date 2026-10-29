@@ -2,6 +2,9 @@
   "appHost": {
     "path": "apphost.cs"
   },
+  "sdk": {
+    "version": "17.0.0-preview.1.26526.15"
+  },
   "channel": "staging",
   "profiles": {
     "https": {

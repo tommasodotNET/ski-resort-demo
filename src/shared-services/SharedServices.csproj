@@ -11,7 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" Version="1.13.0" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.13.0-preview.260703.1" />
-    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.0-preview.0" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.63.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -21,7 +21,10 @@ builder.AddServiceDefaults();
 builder.AddAzureChatCompletionsClient(connectionName: "gpt41",
     configureSettings: settings =>
     {
-        settings.TokenCredential = new DefaultAzureCredential();
+        settings.TokenCredential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+        {
+            ExcludeManagedIdentityCredential = builder.Environment.IsDevelopment()
+        });
         settings.EnableSensitiveTelemetryData = true;
     })
     .AddChatClient();

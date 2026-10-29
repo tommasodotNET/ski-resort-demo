@@ -67,6 +67,10 @@ Edit `src/apphost.settings.Development.json` with your Azure details:
 
 > **Note:** The Azure AI Foundry resource must have a chat completion model deployed (e.g., `gpt-4.1`). The deployment name is configured in the Aspire AppHost.
 
+In Development, the .NET lift-traffic agent skips managed-identity authentication
+so local requests do not wait on Azure's metadata endpoint. Authenticate with
+`az login`; managed identity remains available outside Development.
+
 ### 3. Run the application
 
 From the `src/` directory:
