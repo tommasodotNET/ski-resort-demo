@@ -1,19 +1,19 @@
-#:sdk Aspire.AppHost.Sdk@13.6.4
-#:package Aspire.Hosting.Azure.AppContainers@13.6.4
-#:package Aspire.Hosting.Foundry@13.6.4-preview.1.26523.11
-#:package Aspire.Hosting.Azure.CosmosDB@13.6.4
-#:package Aspire.Hosting.Python@13.6.4
-#:package Aspire.Hosting.JavaScript@13.6.4
+#:sdk Aspire.AppHost.Sdk@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.Azure.AppContainers@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.Foundry@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.Azure.CosmosDB@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.Python@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.JavaScript@17.0.0-preview.1.26530.1
 #:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
 
-#:project ./ski-advisor-a2a/AdvisorAgent.Dotnet.csproj
-#:project ./a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj
-#:project ./skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
-#:project ./responses-gateway/ResponsesGateway.csproj
-#:project ./skills/safety-skills/SafetySkill.Dotnet.csproj
-#:project ./skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
-#:project ./voice-advisor-agent/VoiceAdvisorAgent.csproj
-#:project ./skills/weather-skills/WeatherSkill.Dotnet.csproj
+#:project ./src/ski-advisor-a2a/AdvisorAgent.Dotnet.csproj
+#:project ./src/a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj
+#:project ./src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
+#:project ./src/responses-gateway/ResponsesGateway.csproj
+#:project ./src/skills/safety-skills/SafetySkill.Dotnet.csproj
+#:project ./src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
+#:project ./src/voice-advisor-agent/VoiceAdvisorAgent.csproj
+#:project ./src/skills/weather-skills/WeatherSkill.Dotnet.csproj
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -61,7 +61,7 @@ var skillHistory = db.AddContainer("skillhistory", "/session_id");
 // ---------------------------------------------------------------------------
 // Data Generator (Go)
 // ---------------------------------------------------------------------------
-var dataGenerator = builder.AddGolangApp("datagenerator", "./data-generator")
+var dataGenerator = builder.AddGolangApp("datagenerator", "./src/data-generator")
     .WithGoModTidy()
     .WithHttpEndpoint(env: "PORT")
     .WithExternalHttpEndpoints()
@@ -71,7 +71,7 @@ var dataGenerator = builder.AddGolangApp("datagenerator", "./data-generator")
 // ---------------------------------------------------------------------------
 // Weather Agent (Python)
 // ---------------------------------------------------------------------------
-var weatherAgent = builder.AddUvicornApp("weatheragenta2a", "./a2a/weather-agent-a2a", "weather_agent_python.main:app")
+var weatherAgent = builder.AddUvicornApp("weatheragenta2a", "./src/a2a/weather-agent-a2a", "weather_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -83,7 +83,7 @@ weatherAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, weatherAgent.Ge
 // ---------------------------------------------------------------------------
 // Safety Agent (Python)
 // ---------------------------------------------------------------------------
-var safetyAgent = builder.AddUvicornApp("safetyagenta2a", "./a2a/safety-agent-a2a", "safety_agent_python.main:app")
+var safetyAgent = builder.AddUvicornApp("safetyagenta2a", "./src/a2a/safety-agent-a2a", "safety_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -95,7 +95,7 @@ safetyAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, safetyAgent.GetE
 // ---------------------------------------------------------------------------
 // Ski Coach Agent (Python)
 // ---------------------------------------------------------------------------
-var coachAgent = builder.AddUvicornApp("skicoachagenta2a", "./a2a/ski-coach-agent-a2a", "ski_coach_agent_python.main:app")
+var coachAgent = builder.AddUvicornApp("skicoachagenta2a", "./src/a2a/ski-coach-agent-a2a", "ski_coach_agent_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
@@ -107,7 +107,7 @@ coachAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, coachAgent.GetEnd
 // ---------------------------------------------------------------------------
 // Lift Traffic Agent (.NET)
 // ---------------------------------------------------------------------------
-var liftAgent = builder.AddProject("lifttrafficagenta2a", "./a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj")
+var liftAgent = builder.AddProject("lifttrafficagenta2a", "./src/a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj")
     .WithExternalHttpEndpoints()
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -117,25 +117,25 @@ liftAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, liftAgent.GetEndpo
 // ---------------------------------------------------------------------------
 // MCP-hosted Agent Skills (.NET)
 // ---------------------------------------------------------------------------
-var weatherSkill = builder.AddProject("weatherskills", "./skills/weather-skills/WeatherSkill.Dotnet.csproj")
+var weatherSkill = builder.AddProject("weatherskills", "./src/skills/weather-skills/WeatherSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var safetySkill = builder.AddProject("safetyskills", "./skills/safety-skills/SafetySkill.Dotnet.csproj")
+var safetySkill = builder.AddProject("safetyskills", "./src/skills/safety-skills/SafetySkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var coachSkill = builder.AddProject("skicoachskills", "./skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
+var coachSkill = builder.AddProject("skicoachskills", "./src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var liftSkill = builder.AddProject("lifttrafficskills", "./skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
+var liftSkill = builder.AddProject("lifttrafficskills", "./src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -146,7 +146,7 @@ var liftSkill = builder.AddProject("lifttrafficskills", "./skills/lift-traffic-s
 // ---------------------------------------------------------------------------
 var skillsAdvisorA2A = builder.AddUvicornApp(
         "skiadvisorskilla2a",
-        "./ski-advisor-skill",
+        "./src/ski-advisor-skill",
         "skills_orchestrator_python.main:app")
     .WithUv()
     .WithExternalHttpEndpoints()
@@ -166,7 +166,7 @@ skillsAdvisorA2A.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, skillsAdvis
 // ---------------------------------------------------------------------------
 var skillsAdvisor = builder.AddPythonExecutable(
         "skiadvisorskill",
-        "./ski-advisor-skill",
+        "./src/ski-advisor-skill",
         "start-responses")
     .WithUv()
     .WithReference(deployment).WaitFor(deployment)
@@ -182,7 +182,7 @@ var skillsAdvisor = builder.AddPythonExecutable(
 // ---------------------------------------------------------------------------
 // A2A Orchestrator (.NET)
 // ---------------------------------------------------------------------------
-var advisorAgent = builder.AddProject("skiadvisora2a", "./ski-advisor-a2a/AdvisorAgent.Dotnet.csproj")
+var advisorAgent = builder.AddProject("skiadvisora2a", "./src/ski-advisor-a2a/AdvisorAgent.Dotnet.csproj")
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(weatherAgent).WaitFor(weatherAgent)
     .WithReference(liftAgent).WaitFor(liftAgent)
@@ -194,7 +194,7 @@ var advisorAgent = builder.AddProject("skiadvisora2a", "./ski-advisor-a2a/Adviso
 // ---------------------------------------------------------------------------
 // Voice Advisor Agents (.NET) — architecture-specific Voice Live bridges
 // ---------------------------------------------------------------------------
-var voiceAdvisorA2A = builder.AddProject("voiceadvisora2a", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
+var voiceAdvisorA2A = builder.AddProject("voiceadvisora2a", "./src/voice-advisor-agent/VoiceAdvisorAgent.csproj")
     .WithReference(project).WaitFor(project)
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(voiceDeployment).WaitFor(voiceDeployment)
@@ -207,7 +207,7 @@ var voiceAdvisorA2A = builder.AddProject("voiceadvisora2a", "./voice-advisor-age
     .WithEnvironment("VOICE_ADVISOR_ARCHITECTURE", "a2a")
     .WithComputeEnvironment(aca);
 
-var voiceAdvisorSkill = builder.AddProject("voiceadvisorskill", "./voice-advisor-agent/VoiceAdvisorAgent.csproj")
+var voiceAdvisorSkill = builder.AddProject("voiceadvisorskill", "./src/voice-advisor-agent/VoiceAdvisorAgent.csproj")
     .WithReference(voiceDeployment).WaitFor(voiceDeployment)
     .WithReference(conversations).WaitFor(conversations)
     .WithReference(skillsAdvisorA2A).WaitFor(skillsAdvisorA2A)
@@ -217,7 +217,7 @@ var voiceAdvisorSkill = builder.AddProject("voiceadvisorskill", "./voice-advisor
 // ---------------------------------------------------------------------------
 // Frontend Dashboard (Vite + React)
 // ---------------------------------------------------------------------------
-var frontend = builder.AddViteApp("frontend", "./frontend", "dev")
+var frontend = builder.AddViteApp("frontend", "./src/frontend", "dev")
     .WithReference(voiceAdvisorA2A).WaitFor(voiceAdvisorA2A)
     .WithReference(voiceAdvisorSkill).WaitFor(voiceAdvisorSkill)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -232,7 +232,7 @@ var frontend = builder.AddViteApp("frontend", "./frontend", "dev")
 
 if (builder.ExecutionContext.IsPublishMode)
 {
-    builder.AddProject("frontendgateway", "./responses-gateway/ResponsesGateway.csproj")
+    builder.AddProject("frontendgateway", "./src/responses-gateway/ResponsesGateway.csproj")
         .WithHttpEndpoint(env: "PORT")
         .WithExternalHttpEndpoints()
         .WithReference(advisorAgent).WaitFor(advisorAgent)
@@ -254,7 +254,7 @@ if (builder.ExecutionContext.IsPublishMode)
 if (builder.ExecutionContext.IsRunMode)
 {
 
-    builder.AddViteApp("slides", "../slides", "start")
+    builder.AddViteApp("slides", "./slides", "start")
         .WithUrls((e) =>
         {
             e.Urls.Clear();

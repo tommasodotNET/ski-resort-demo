@@ -494,7 +494,7 @@ Aspire provides:
 
 ## Version
 
-* Aspire **13.1.1** (latest)
+* Aspire **17.0.0-preview.1.26530.1**, pinned to the **daily** channel in `aspire.config.json`
 
 ## How It Works
 
@@ -553,9 +553,9 @@ User:
 # 16. Folder Structure
 
 ```
+/apphost.cs
+/aspire.config.json
 /src
-  apphost.cs
-  aspire.config.json
   /ski-advisor-a2a
   /ski-advisor-skill
   /voice-advisor-agent

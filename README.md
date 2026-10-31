@@ -39,6 +39,18 @@ from that evolving profile. See the [profile details](src/ski-advisor-skill/READ
 
 Refer to the [official Aspire documentation](https://aspire.dev/get-started/install-cli/) for installation instructions.
 
+The repository pins Aspire **17.0.0-preview.1.26530.1** from the **daily**
+channel in `aspire.config.json` and `apphost.cs`. The CLI uses that
+repository-local version; `nuget.config` maps Aspire packages to the official
+daily feed. `Aspire.Azure.AI.Inference` uses **17.0.0-preview.1.26514.11**,
+the latest available daily build of that integration.
+
+To update the repository pins to a newer daily build, run from the repository root:
+
+```bash
+aspire update --apphost apphost.cs --channel daily --yes --non-interactive --nuget-config-dir .
+```
+
 ## Setup
 
 ### 1. Clone the repository
@@ -50,7 +62,7 @@ cd ski-resort-demo
 
 ### 2. Configure Azure settings
 
-Edit `src/apphost.settings.Development.json` with your Azure details:
+Create or edit `apphost.settings.Development.json` in the repository root with your Azure details:
 
 ```json
 {
@@ -73,10 +85,9 @@ so local requests do not wait on Azure's metadata endpoint. Authenticate with
 
 ### 3. Run the application
 
-From the `src/` directory:
+From the repository root:
 
 ```bash
-cd src
 aspire start
 ```
 
@@ -97,7 +108,7 @@ Responses advisors to Foundry hosted agents:
 Azure__SubscriptionId="$AZURE_SUBSCRIPTION_ID" \
 Azure__Location="$AZURE_LOCATION" \
 Azure__ResourceGroup="$AZURE_RESOURCE_GROUP" \
-aspire deploy --apphost src/apphost.cs --non-interactive
+aspire deploy --apphost apphost.cs --non-interactive
 ```
 
 For this non-production demo, Cosmos DB allows public network access so the
@@ -131,9 +142,10 @@ agent identity is recreated. Missing this binding produces a Cosmos 403 for
 ## Project Structure
 
 ```
+apphost.cs                         # Aspire orchestration (all services wired here)
+aspire.config.json                 # Aspire CLI version and launch profiles
+apphost.settings.Development.json  # Local Azure configuration (not committed)
 src/
-├── apphost.cs                      # Aspire orchestration (all services wired here)
-├── apphost.settings.Development.json  # Azure configuration
 ├── ski-advisor-a2a/                # skiadvisora2a orchestrator
 ├── ski-advisor-skill/              # skiadvisorskill + skiadvisorskilla2a surfaces
 ├── voice-advisor-agent/            # Shared .NET project for both Voice Live resources
@@ -154,7 +166,7 @@ src/
 └── service-defaults/                # Aspire service defaults
 ```
 
-`src/apphost.cs` is the source of truth for active services, including publish-only
+`apphost.cs` is the source of truth for active services, including publish-only
 resources. Shared libraries remain alongside the advisors; the ski researcher is
 a Foundry prompt agent declared in the AppHost, not a separate local MCP project.
 The lift-traffic A2A project contains only its agent and local function tools;

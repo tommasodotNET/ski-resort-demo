@@ -271,7 +271,7 @@ def main() -> None:
 
 ## AppHost Checklist
 
-- Add the Python project as an Aspire executable or integration following the existing Python agent entries in `src/apphost.cs`.
+- Add the Python project as an Aspire executable or integration following the existing Python agent entries in `apphost.cs`.
 - Reference `deployment`/`gpt41` so `ConnectionStrings__gpt41` is injected.
 - Reference Python A2A agents from .NET consumers with `services__your-agent-python__https__0` and `/.well-known/agent-card.json`.
 - Use HTTPS service variables first, then fall back to HTTP when the consumer already does that.

@@ -3,9 +3,9 @@
     "path": "apphost.cs"
   },
   "sdk": {
-    "version": "17.0.0-preview.1.26526.15"
+    "version": "17.0.0-preview.1.26530.1"
   },
-  "channel": "staging",
+  "channel": "daily",
   "profiles": {
     "https": {
       "applicationUrl": "https://skiresort.dev.localhost:17032;http://skiresort.dev.localhost:15109",
