@@ -45,7 +45,7 @@ Voice agents need Voice Live, A2A, Agent Framework, Cosmos, and Foundry packages
 <PackageReference Include="Azure.AI.Extensions.OpenAI" Version="2.1.0-beta.1" />
 <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.2.0" />
 <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.2.0-preview.260421.1" />
-<PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="13.4.0-preview.1.26262.1" />
+<PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="17.0.0-preview.1.26530.1" />
 ```
 
 ## AppHost Requirements

@@ -301,10 +301,10 @@ response store. The Cosmos path is the default for both hosts under Aspire.
 
 ```bash
 # From repository root, with your configured Azure environment:
-aspire start --apphost src/apphost.cs
+aspire start --apphost apphost.cs
 
 # For an additional worktree instance:
-aspire start --isolated --apphost src/apphost.cs
+aspire start --isolated --apphost apphost.cs
 
 # Standalone, from src/ski-advisor-skill:
 uv sync

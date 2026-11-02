@@ -19,7 +19,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.AddKeyedAzureCosmosContainer("conversations",
-    configureClientOptions: (option) =>
+    configureClientOptions: (_, option) =>
     {
         option.Serializer = new CosmosSystemTextJsonSerializer();
     });

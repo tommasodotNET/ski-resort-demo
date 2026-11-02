@@ -26,7 +26,7 @@ Typical packages for an A2A .NET specialist:
 <PackageReference Include="Microsoft.Agents.AI.A2A" Version="1.2.0-preview.260421.1" />
 <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.2.0-preview.260421.1" />
 <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.2.0-preview.260421.1" />
-<PackageReference Include="Aspire.Azure.AI.Inference" Version="13.2.4-preview.1.26224.4" />
+<PackageReference Include="Aspire.Azure.AI.Inference" Version="17.0.0-preview.1.26514.11" />
 ```
 
 Add shared project references when needed:
