@@ -407,3 +407,4 @@ FodyWeavers.xsd
 agent-framework-aspire.sln
 
 .nugetpackages/
+.dotnet/

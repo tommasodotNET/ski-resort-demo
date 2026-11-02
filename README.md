@@ -23,6 +23,7 @@ from that evolving profile. See the [profile details](src/ski-advisor-skill/READ
 | **Ski Researcher** | Foundry | Existing web-backed prompt agent used directly as a tool by both orchestrators |
 | **Data Generator** | Go | Continuously generates synthetic resort telemetry |
 | **Frontend** | React/Vite | Real-time dashboard with AI chat and voice controls |
+| **Desktop** | MAUI/Avalonia | Native Linux/macOS dashboard, streaming chat, and Voice Live |
 
 ## Prerequisites
 
@@ -99,6 +100,74 @@ Open the **Aspire dashboard** (URL shown in terminal output) to see all services
 
 The **frontend** will be available at the URL assigned by Aspire (shown in the dashboard).
 
+### Desktop (Linux and macOS)
+
+The native desktop uses the same MAUI-on-Avalonia approach as `puff-schedule`
+and `budgeting-app`: MAUI controls rendered by Avalonia, **not an embedded browser**.
+It includes weather measurements and chart, avalanche risk and incidents, grouped
+slopes/lifts with status and queues, both advisor architectures, streaming chat,
+new conversations, and microphone/speaker voice conversations with live transcripts.
+The existing React frontend remains unchanged.
+
+Install the desktop-only SDK and packages once:
+
+```bash
+bash src/desktop/setup.sh
+```
+
+The pinned .NET 11 preview SDK lives in ignored `src/desktop/.dotnet/`.
+Its `global.json` applies only inside `src/desktop`; the AppHost and existing
+.NET 10 services keep their current SDK. No MAUI mobile workloads are needed.
+Delete that specific `.dotnet` directory to remove the local SDK.
+
+Start Aspire as usual, then start **desktop** in the Aspire dashboard. The resource
+is explicit-start so headless machines and existing web-only development do not
+launch a GUI or require the desktop SDK. It waits for the frontend and receives
+its dynamic URL automatically. It is not included in Azure publishing.
+
+Aspire injects `ALPINEAI_SERVER_URL`; the desktop connects automatically and has
+no backend address bar or manual connection settings. Starting without that
+configuration shows an explicit error directing you to launch through Aspire.
+HTTPS is required except for localhost development. The desktop uses the existing
+`/api`, `/responses/{a2a|skill}`, `/ws/voice/{a2a|skill}`, and `/config.json` routes,
+including the configured polling interval and hosted skills-session continuation.
+Backend services must still be running; the desktop is not an offline backend.
+
+Voice requires default microphone/output devices and **PortAudio**:
+`sudo dnf install portaudio` (Fedora), `sudo apt install libportaudio2`
+(Ubuntu), or `brew install portaudio` (macOS). Linux also needs a graphical
+session and Avalonia's usual X11/font/native graphics libraries. Voice errors,
+including missing devices or denied microphone access, are shown in the app;
+the rest of the dashboard works without PortAudio. Use headphones to prevent
+speaker audio feeding back into the microphone (native capture does not apply
+the browser's echo cancellation).
+
+Create a self-contained desktop build:
+
+```bash
+bash src/desktop/publish.sh linux-x64  # also linux-arm64, osx-arm64, osx-x64
+```
+
+Linux output is under `src/desktop/artifacts/<rid>/`. Published executables also
+require `ALPINEAI_SERVER_URL` to be supplied by their orchestrating environment.
+macOS output is an `AlpineAI.app` bundle with its microphone permission
+description. Build/sign it on macOS and grant microphone access when prompted.
+The script ad-hoc signs on macOS; public distribution still requires Developer ID
+signing/notarization. PortAudio remains an OS prerequisite. For terminal-based
+macOS development, grant microphone access to the terminal hosting the app.
+
+Desktop protocol and headless native UI tests:
+
+```bash
+cd src/desktop
+.dotnet/dotnet test AlpineAI.Tests
+```
+
+The native UI tests cover compact dashboard layouts at 640, 768, 1024, and 1380
+pixels and repeated A2A/MCP switches, including long streamed and HTTP errors.
+They check that old chat bubbles are released and retained managed memory stays
+bounded. Headless checks do not replace testing macOS rendering or audio hardware.
+
 ### Deploy to Azure
 
 The AppHost deploys supporting services to Azure Container Apps and the two
@@ -161,6 +230,7 @@ src/
 │   └── lift-traffic-skills/
 ├── data-generator/                 # Go data generator
 ├── frontend/                       # Vite + React + Tailwind dashboard
+├── desktop/                        # MAUI/Avalonia desktop, clients, tests, local SDK
 ├── responses-gateway/              # Frontend gateway used when publishing
 ├── shared-services/                # .NET shared library (Cosmos, thread store)
 └── service-defaults/                # Aspire service defaults

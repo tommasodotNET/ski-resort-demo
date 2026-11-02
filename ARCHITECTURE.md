@@ -14,6 +14,7 @@ The system is built using:
 * Real-time fake telemetry generator
 * Event-driven communication
 * A real-time frontend dashboard
+* A native MAUI/Avalonia desktop dashboard for Linux and macOS (no WebView)
 
 The app deliberately exposes two alternative orchestration paths:
 
@@ -50,7 +51,17 @@ but model-selected work and answers need not be equivalent.
 | Real-Time Data Generator | Go                             | Fake telemetry + weather + events |
 | Event Bus                | Cloud-native (Dapr or similar) | Pub/Sub event backbone            |
 | Frontend Dashboard       | React / Next.js                | Visualization UI                  |
+| Desktop Dashboard        | .NET MAUI / Avalonia            | Native Linux/macOS UI, streaming chat, and voice |
 | API Gateway              | .NET                           | Unified access point              |
+
+The desktop in `src/desktop` renders MAUI controls using Avalonia, draws its
+weather chart with a native `GraphicsView`, and captures/plays PCM16 audio using
+PortAudio. It does not host HTML, React, or a WebView. Typed .NET clients use the
+same dashboard HTTP, Responses SSE, and voice WebSocket contracts as the web UI,
+through the local Vite proxy or deployed frontend gateway. Its isolated .NET 11
+SDK does not change the AppHost or existing service SDKs. Aspire registers it as
+an explicit-start, local-only `desktop` resource that waits for `frontend`;
+desktop packaging is separate from Azure deployment.
 
 ---
 

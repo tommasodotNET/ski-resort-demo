@@ -253,6 +253,15 @@ if (builder.ExecutionContext.IsPublishMode)
 
 if (builder.ExecutionContext.IsRunMode)
 {
+    // Keep the desktop's .NET 11 SDK boundary separate from this AppHost and the .NET 10 services.
+    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+    {
+        builder.AddExecutable("desktop", "bash", "./src/desktop", "run.sh")
+            .WithReference(frontend)
+            .WithEnvironment("ALPINEAI_SERVER_URL", frontend.GetEndpoint("http"))
+            .WaitFor(frontend)
+            .WithExplicitStart();
+    }
 
     builder.AddViteApp("slides", "./slides", "start")
         .WithUrls((e) =>
