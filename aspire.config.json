@@ -1,9 +1,14 @@
 {
+  "configSource": {
+    "optOut": true,
+    "repository": "",
+    "path": ""
+  },
   "appHost": {
     "path": "apphost.cs"
   },
   "sdk": {
-    "version": "17.0.0-preview.1.26530.1"
+    "version": "17.1.0-preview.1.26559.12"
   },
   "channel": "daily",
   "profiles": {

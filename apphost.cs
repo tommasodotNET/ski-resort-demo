@@ -1,22 +1,12 @@
-#:sdk Aspire.AppHost.Sdk@17.0.0-preview.1.26530.1
-#:package Aspire.Hosting.Azure.AppContainers@17.0.0-preview.1.26530.1
-#:package Aspire.Hosting.Foundry@17.0.0-preview.1.26530.1
-#:package Aspire.Hosting.Azure.CosmosDB@17.0.0-preview.1.26530.1
-#:package Aspire.Hosting.Python@17.0.0-preview.1.26530.1
-#:package Aspire.Hosting.JavaScript@17.0.0-preview.1.26530.1
+#:package Aspire.Hosting.AppHost@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.Dotnet@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.Azure.AppContainers@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.Foundry@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.Azure.CosmosDB@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.Python@17.1.0-preview.1.26559.12
+#:package Aspire.Hosting.JavaScript@17.1.0-preview.1.26559.12
 #:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
 
-#:project ./src/ski-advisor-a2a/AdvisorAgent.Dotnet.csproj
-#:project ./src/a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj
-#:project ./src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj
-#:project ./src/responses-gateway/ResponsesGateway.csproj
-#:project ./src/skills/safety-skills/SafetySkill.Dotnet.csproj
-#:project ./src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj
-#:project ./src/voice-advisor-agent/VoiceAdvisorAgent.csproj
-#:project ./src/skills/weather-skills/WeatherSkill.Dotnet.csproj
-
-using Aspire.Hosting;
-using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Foundry;
 using Azure.Provisioning.CosmosDB;
 
@@ -107,7 +97,7 @@ coachAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, coachAgent.GetEnd
 // ---------------------------------------------------------------------------
 // Lift Traffic Agent (.NET)
 // ---------------------------------------------------------------------------
-var liftAgent = builder.AddProject("lifttrafficagenta2a", "./src/a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj")
+var liftAgent = builder.AddDotnetProject("lifttrafficagenta2a", "./src/a2a/lift-traffic-agent-a2a/LiftTrafficAgent.Dotnet.csproj")
     .WithExternalHttpEndpoints()
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -117,25 +107,25 @@ liftAgent.WithEnvironment(A2AAgentBaseUrlEnvironmentVariable, liftAgent.GetEndpo
 // ---------------------------------------------------------------------------
 // MCP-hosted Agent Skills (.NET)
 // ---------------------------------------------------------------------------
-var weatherSkill = builder.AddProject("weatherskills", "./src/skills/weather-skills/WeatherSkill.Dotnet.csproj")
+var weatherSkill = builder.AddDotnetProject("weatherskills", "./src/skills/weather-skills/WeatherSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var safetySkill = builder.AddProject("safetyskills", "./src/skills/safety-skills/SafetySkill.Dotnet.csproj")
+var safetySkill = builder.AddDotnetProject("safetyskills", "./src/skills/safety-skills/SafetySkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var coachSkill = builder.AddProject("skicoachskills", "./src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
+var coachSkill = builder.AddDotnetProject("skicoachskills", "./src/skills/ski-coach-skills/SkiCoachSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
     .WithComputeEnvironment(aca);
 
-var liftSkill = builder.AddProject("lifttrafficskills", "./src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
+var liftSkill = builder.AddDotnetProject("lifttrafficskills", "./src/skills/lift-traffic-skills/LiftTrafficSkill.Dotnet.csproj")
     .WithHttpEndpoint()
     .WithExternalHttpEndpoints()
     .WithReference(dataGenerator).WaitFor(dataGenerator)
@@ -194,7 +184,7 @@ var advisorAgent = builder.AddProject("skiadvisora2a", "./src/ski-advisor-a2a/Ad
 // ---------------------------------------------------------------------------
 // Voice Advisor Agents (.NET) — architecture-specific Voice Live bridges
 // ---------------------------------------------------------------------------
-var voiceAdvisorA2A = builder.AddProject("voiceadvisora2a", "./src/voice-advisor-agent/VoiceAdvisorAgent.csproj")
+var voiceAdvisorA2A = builder.AddDotnetProject("voiceadvisora2a", "./src/voice-advisor-agent/VoiceAdvisorAgent.csproj")
     .WithReference(project).WaitFor(project)
     .WithReference(deployment).WaitFor(deployment)
     .WithReference(voiceDeployment).WaitFor(voiceDeployment)
