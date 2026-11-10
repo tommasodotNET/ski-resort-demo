@@ -5,7 +5,7 @@
 #:package Aspire.Hosting.Azure.CosmosDB@17.1.0-preview.1.26559.12
 #:package Aspire.Hosting.Python@17.1.0-preview.1.26559.12
 #:package Aspire.Hosting.JavaScript@17.1.0-preview.1.26559.12
-#:package CommunityToolkit.Aspire.Hosting.Golang@13.3.0
+#:package Aspire.Hosting.Go@17.1.0-preview.1.26559.12
 
 using Aspire.Hosting.Foundry;
 using Azure.Provisioning.CosmosDB;
@@ -51,8 +51,8 @@ var skillHistory = db.AddContainer("skillhistory", "/session_id");
 // ---------------------------------------------------------------------------
 // Data Generator (Go)
 // ---------------------------------------------------------------------------
-var dataGenerator = builder.AddGolangApp("datagenerator", "./src/data-generator")
-    .WithGoModTidy()
+var dataGenerator = builder.AddGoApp("datagenerator", "./src/data-generator")
+    .WithModTidy()
     .WithHttpEndpoint(env: "PORT")
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
